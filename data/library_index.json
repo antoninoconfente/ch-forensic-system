@@ -1,0 +1,120 @@
+{
+  "cataloged_cases": [
+    {
+      "case_id": "EXP-CH-2B99",
+      "object_description": "Pieza de lujo analizada por visión artificial multi-toma",
+      "context_notes": "Sin notas adicionales",
+      "image_path": "data/cases/EXP-CH-2B99/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-2B99"
+    },
+    {
+      "case_id": "EXP-CH-A02E",
+      "object_description": "Pieza de lujo analizada por visión artificial multi-toma",
+      "context_notes": "Sin notas adicionales",
+      "image_path": "data/cases/EXP-CH-A02E/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-A02E"
+    },
+    {
+      "case_id": "EXP-CH-C3A2",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "lapicera azul",
+      "image_path": "data/cases/EXP-CH-C3A2/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-C3A2"
+    },
+    {
+      "case_id": "EXP-CH-D20C",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "lapicera azul",
+      "image_path": "data/cases/EXP-CH-D20C/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-D20C"
+    },
+    {
+      "case_id": "EXP-CH-03C3",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "lapicera",
+      "image_path": "data/cases/EXP-CH-03C3/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-03C3"
+    },
+    {
+      "case_id": "EXP-CH-D1EF",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "reloj de viaje",
+      "image_path": "data/cases/EXP-CH-D1EF/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-D1EF"
+    },
+    {
+      "case_id": "EXP-CH-D117",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "reloj de viaje",
+      "image_path": "data/cases/EXP-CH-D117/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-D117"
+    },
+    {
+      "case_id": "EXP-CH-ADD9",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "reloj de viaje",
+      "image_path": "data/cases/EXP-CH-ADD9/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-ADD9"
+    },
+    {
+      "case_id": "EXP-CH-B6C1",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "pipa",
+      "image_path": "data/cases/EXP-CH-B6C1/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-B6C1"
+    },
+    {
+      "case_id": "EXP-CH-4BAE",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "encendedor",
+      "image_path": "data/cases/EXP-CH-4BAE/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-4BAE"
+    },
+    {
+      "case_id": "EXP-CH-63A7",
+      "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+      "context_notes": "encendedor",
+      "image_path": "data/cases/EXP-CH-63A7/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-63A7"
+    },
+    {
+      "case_id": "EXP-CH-340A",
+      "object_description": "Pieza de alta gama analizada por visión artificial",
+      "context_notes": "Sin notas adicionales",
+      "image_path": "data/cases/EXP-CH-340A/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-340A"
+    },
+    {
+      "case_id": "EXP-CH-87BA",
+      "object_description": "Pieza de alta gama analizada por visión artificial",
+      "context_notes": "Sin notas adicionales",
+      "image_path": "data/cases/EXP-CH-87BA/evidence/evidence_1.jpg",
+      "folder_path": "data/cases/EXP-CH-87BA"
+    },
+    {
+      "case_id": "EXP-CH-75D1",
+      "object_description": "Pieza de alta gama analizada por visión artificial",
+      "context_notes": " — [Validación pericial: Aclaración: En los sistemas tradicionales de contraste de la ley del oro en Asia Oriental (y en los sellos de orfebre autorizados para la exportación), este glifo suele representar el nombre del taller (maker's mark) o la abreviatura del gremio de artesanos locales. Con frecuencia, los talleres japoneses utilizaban un kanji simplificado de dos caracteres encerrados o contiguos para certificar la marca de responsabilidad antes de aduana. | Aclaración: pendiente | Aclaración: pendiente | Aclaración: pendiente | Aclaración: Suele corresponder al sello personal del maestro artesano que validó la pieza o a la marca distintiva del taller matriz. A diferencia de los punzones estatales rígidos de Europa (como el águila francesa o la estrella italiana), la legislación de exportación asiática permitía a los grandes talleres autorizados estampar su propia marca de fundición combinada con el estándar internacional exigido por los compradores occidentales (de ahí la convivencia directa con el 750 y el 18K). | Aclaración: no | Aclaración: hueco]",
+      "image_path": "data/cases/EXP-CH-75D1/evidence/evidence_1.jpeg",
+      "folder_path": "data/cases/EXP-CH-75D1"
+    }
+  ],
+  "search_queries_log": {
+    "PIEZA": [
+      "Pieza de lujo analizada por visión artificial multi-toma Sin notas adicionales catalog vintage dating auction",
+      "Pieza de lujo analizada por visión artificial multi-toma serial number format identification collector",
+      "Pieza de lujo analizada por visión artificial multi-toma hallmark identification guide museum reference"
+    ],
+    "[SPOT": [
+      "Pieza de alta gama analizada por visión artificial  [SPOT MARKET DATA - Gold: 74.5€/g, Silver: 0.88€/g] auction results price hammer value",
+      "Pieza de alta gama analizada por visión artificial  [SPOT MARKET DATA - Gold: 74.5€/g, Silver: 0.88€/g] vintage collector market price second hand",
+      "Pieza de alta gama analizada por visión artificial  [SPOT MARKET DATA - Gold: 74.5€/g, Silver: 0.88€/g] catalog reference price guide"
+    ],
+    "—": [
+      "Pieza de alta gama analizada por visión artificial  — [Validación pericial: Aclaración: ello institucionales/gremial de orfebrería fina con trazos estilizados de carácter oriental (asociado a los estándares de contraste y marcas de garantía de talleres de exportación asiáticos / Japan Mint o punzones de maestro artesano tradicional). | Aclaración: no | Aclaración: Sello de orfebrería de alta gama de exportación (mercado asiático/japonés bajo patrón occidental de 18K). | Aclaración: hueco | Aclaración: no] auction results price hammer value",
+      "Pieza de alta gama analizada por visión artificial  — [Validación pericial: Aclaración: ello institucionales/gremial de orfebrería fina con trazos estilizados de carácter oriental (asociado a los estándares de contraste y marcas de garantía de talleres de exportación asiáticos / Japan Mint o punzones de maestro artesano tradicional). | Aclaración: no | Aclaración: Sello de orfebrería de alta gama de exportación (mercado asiático/japonés bajo patrón occidental de 18K). | Aclaración: hueco | Aclaración: no] vintage collector market price second hand",
+      "Pieza de alta gama analizada por visión artificial  — [Validación pericial: Aclaración: ello institucionales/gremial de orfebrería fina con trazos estilizados de carácter oriental (asociado a los estándares de contraste y marcas de garantía de talleres de exportación asiáticos / Japan Mint o punzones de maestro artesano tradicional). | Aclaración: no | Aclaración: Sello de orfebrería de alta gama de exportación (mercado asiático/japonés bajo patrón occidental de 18K). | Aclaración: hueco | Aclaración: no] catalog reference price guide"
+    ]
+  },
+  "trusted_domains": []
+}

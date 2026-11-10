@@ -1,0 +1,13 @@
+{
+  "case_id": "EXP-CH-D20C",
+  "object_description": "Pieza de lujo analizada por visión artificial (Multifuente)",
+  "context_notes": "lapicera azul",
+  "image_path": "data/cases/EXP-CH-D20C/evidence/evidence_1.jpg",
+  "dictamen_path": "data/cases/EXP-CH-D20C/dictamen.md",
+  "successful_queries": [
+    "Pieza de lujo analizada por visión artificial multi-toma Sin notas adicionales catalog vintage dating auction",
+    "Pieza de lujo analizada por visión artificial multi-toma serial number format identification collector",
+    "Pieza de lujo analizada por visión artificial multi-toma hallmark identification guide museum reference"
+  ],
+  "timestamp": 1793795120.466319
+}

@@ -1,0 +1,13 @@
+{
+  "case_id": "EXP-CH-2B99",
+  "object_description": "Pieza de lujo analizada por visión artificial multi-toma",
+  "context_notes": "Sin notas adicionales",
+  "image_path": "data/cases/EXP-CH-2B99/evidence/evidence_1.jpg",
+  "dictamen_path": "data/cases/EXP-CH-2B99/dictamen.md",
+  "successful_queries": [
+    "Pieza de lujo analizada por visión artificial multi-toma Sin notas adicionales catalog vintage dating auction",
+    "Pieza de lujo analizada por visión artificial multi-toma serial number format identification collector",
+    "Pieza de lujo analizada por visión artificial multi-toma hallmark identification guide museum reference"
+  ],
+  "timestamp": 1793788939.7881238
+}

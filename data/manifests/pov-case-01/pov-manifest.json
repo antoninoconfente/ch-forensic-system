@@ -1,0 +1,30 @@
+{
+  "manifest_version": "2.0-core",
+  "case_id": "pov-case-01",
+  "created_at": "2026-10-30T13:06:23.563113Z",
+  "artifacts": [
+    {
+      "artifact_id": "pov-object",
+      "file_name": "pov-object.jpg",
+      "file_size_bytes": 1818,
+      "sha256_hash": "0285851450777b1ff61121b1abb1c6f0a0bcca7581c25aea3b6105174fc30f9d",
+      "captured_at": "2026-10-30T13:06:19.814032Z",
+      "metadata": {
+        "source": "pov-fixture",
+        "role": "visual-input"
+      }
+    },
+    {
+      "artifact_id": "pov-vision-observation",
+      "file_name": "pov-vision-observation.json",
+      "file_size_bytes": 2051,
+      "sha256_hash": "b77ab90a28d990a2b8c79fd3c8a13dcff2ff8b803acd35f426fa83a8560f7b79",
+      "captured_at": "2026-10-30T13:06:23.563063Z",
+      "metadata": {
+        "source": "openai-controlled-vision",
+        "status": "MODEL_REPORTED_UNVERIFIED",
+        "model_name": "gpt-4o"
+      }
+    }
+  ]
+}

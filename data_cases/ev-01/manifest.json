@@ -1,0 +1,13 @@
+{
+  "object_id": "ev-01",
+  "created_at": "2026-11-02T10:54:03.964005+00:00",
+  "sha256_hash": "4ebdd1630b65bd035f29acc439b9e4c0e7bed1a42a75c688b679a008fb3da893",
+  "original_filename": "tmpo4jkyqui.jpg",
+  "file_size_bytes": 2384399,
+  "status": "RAW_INGESTED",
+  "metadata": {
+    "source": "ui_upload",
+    "mime_type": "image/jpeg",
+    "original_filename": "IMG20260902130439.jpg"
+  }
+}

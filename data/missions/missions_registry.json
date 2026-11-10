@@ -1,0 +1,38 @@
+{
+    "caso-0aed": {
+        "mission_id": "caso-0aed",
+        "timestamp": "2026-11-03T10:30:46.642298",
+        "description": "encendedor vintage",
+        "notes": "",
+        "images": [
+            "data/temp/caso-0aed_0_IMG20260902130439.jpg",
+            "data/temp/caso-0aed_1_IMG20260902130450.jpg"
+        ],
+        "report_hash": "52f243cf176e2cc700baab243d249ebbcaf9db36ca5d2f5c573622263e7e5163",
+        "updates_count": 3
+    },
+    "caso-879e": {
+        "mission_id": "caso-879e",
+        "timestamp": "2026-11-03T11:25:27.877547",
+        "description": "encendedor vintage",
+        "notes": "",
+        "images": [
+            "data/temp/caso-879e_0_IMG20260902130439.jpg",
+            "data/temp/caso-879e_1_IMG20260902130450.jpg"
+        ],
+        "report_hash": "7c94c665f4da440af5e3cde89bb172d4decdf38e7787313c378e8e997a2de18e",
+        "updates_count": 1
+    },
+    "caso-041c": {
+        "mission_id": "caso-041c",
+        "timestamp": "2026-11-03T11:39:20.901509",
+        "description": "encendedor vintage ",
+        "notes": "",
+        "images": [
+            "data/temp/caso-041c_0_IMG20260902130439.jpg",
+            "data/temp/caso-041c_1_IMG20260902130450.jpg"
+        ],
+        "report_hash": "b0de40c889128d7600010dd35b1ef1e151fb32a29713906a0731c7bb165c3363",
+        "updates_count": 1
+    }
+}

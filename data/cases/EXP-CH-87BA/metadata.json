@@ -1,0 +1,13 @@
+{
+  "case_id": "EXP-CH-87BA",
+  "object_description": "Pieza de alta gama analizada por visión artificial",
+  "context_notes": "Sin notas adicionales",
+  "image_path": "data/cases/EXP-CH-87BA/evidence/evidence_1.jpg",
+  "dictamen_path": "data/cases/EXP-CH-87BA/dictamen.md",
+  "successful_queries": [
+    "Pieza de lujo analizada por visión artificial multi-toma Sin notas adicionales catalog vintage dating auction",
+    "Pieza de lujo analizada por visión artificial multi-toma serial number format identification collector",
+    "Pieza de lujo analizada por visión artificial multi-toma hallmark identification guide museum reference"
+  ],
+  "timestamp": 1793802299.8225238
+}
