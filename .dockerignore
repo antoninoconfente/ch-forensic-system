@@ -1,0 +1,16 @@
+.venv/
+.env
+.env.*
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.git/
+.gitignore
+.cursor/
+data/temp/*
+data/cases/*
+*.md
+!DEPLOYMENT.md
+Dockerfile
+.dockerignore

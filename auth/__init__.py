@@ -1,0 +1,1 @@
+"""Autenticación Supabase para Curiosities Hunter."""

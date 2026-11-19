@@ -1,10 +1,11 @@
+import html
 import os
 import sys
-import json
-import re
+import time
+from functools import partial
 import requests
-import streamlit as st
 from PIL import Image
+from nicegui import ui, app, run
 
 # ---------------------------------------------------------
 # BLINDAJE ABSOLUTO DE RUTAS DE IMPORTACIÓN (PATH RESOLUTION)
@@ -13,241 +14,676 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from src.research.ai_agent import LocalAIAgent, CastleLibrary, sanitize_context_notes
+from agents.orchestrator import ExpertCouncilOrchestrator
+from src.research.ai_agent import (
+    LocalAIAgent,
+    apply_interrogation_update,
+    relationalize_metadata,
+)
+from database.client import (
+    compose_case_summary_for_embedding,
+    delete_case as delete_cloud_case,
+    get_case,
+    get_signed_evidence_url,
+    list_cases,
+    save_case,
+    upload_evidence_to_storage,
+    upsert_case_embedding,
+)
+from database.models import Case, Evidence, GemologyData
+from src.research.gemology import (
+    AUTHORSHIPS,
+    GEM_CLARITIES,
+    GEM_COLORS,
+    GEM_CUTS,
+    GEM_NATURES,
+    GEM_SPECIES,
+    METALS,
+    PEARL_LUSTER,
+    PEARL_MATCHING,
+    PEARL_NACRE,
+    PEARL_NATURES,
+    PEARL_SURFACE,
+    SETTINGS,
+    SUBJECTS,
+    dictamen_section,
+    format_eur as format_gem_eur,
+    normalize_gemology_data,
+    upsert_dictamen,
+    value_piece,
+)
 from src.research.market_engine import MarketEngine
-
-# ==========================================
-# CONFIGURACIÓN DE PÁGINA Y ESTÉTICA EDITORIAL
-# ==========================================
-st.set_page_config(
-    page_title="CH — Peritaje Forense de Lujo",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+from utils.pdf_exporter import generate_dossier_pdf
+from src.research.lots import (
+    STRATEGIES,
+    create_lot,
+    delete_lot,
+    load_lots,
+    piece_contribution,
+    summarize_lot,
+    update_lot_members,
+)
+from src.research.logistics import (
+    CUSTOM_CITY_OPTION,
+    ORIGIN_GAZETTEER,
+    build_logistics_intelligence,
+    extract_appraisal,
+    fold_place_name,
+    format_eur,
+    logistics_brief,
 )
 
-# Inyección de Estilos CSS Editorial de Lujo y Bloque de Auditoría Visible
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #f7f5f0 !important;
-        color: #1a1a1a !important;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
-    h1, h2, h3, h4 {
-        font-family: 'Georgia', Cambria, serif !important;
-        color: #1a1a1a !important;
-        font-weight: 400 !important;
-        letter-spacing: -0.5px !important;
-    }
-    .stButton>button {
-        background-color: transparent !important;
-        color: #1a1a1a !important;
-        font-weight: 400 !important;
-        font-size: 0.8rem !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 0px !important;
-        text-decoration: underline !important;
-        text-transform: none !important;
-        letter-spacing: 0.5px !important;
-        text-align: left !important;
-    }
-    .stButton>button:hover {
-        background-color: transparent !important;
-        color: #b89753 !important;
-    }
-    [data-testid="stFileUploader"] {
-        background-color: #eae6db !important;
-        border: 1px solid #d5d0c1 !important;
-        border-radius: 2px !important;
-        padding: 10px !important;
-    }
-    [data-testid="stFileUploader"] section {
-        background-color: #f2efe9 !important;
-        border: none !important;
-    }
-    .editorial-card {
-        background-color: transparent !important;
-        border: none !important;
-        padding: 10px 5px 20px 5px !important;
-        margin-bottom: 20px;
-    }
-    .editorial-container {
-        background-color: #faf8f3 !important;
-        border: 1px solid #e6e2cc !important;
-        border-radius: 2px !important;
-        padding: 25px !important;
-        margin-bottom: 20px;
-    }
-    .audit-box {
-        background-color: #fdf6e2 !important;
-        border: 1px solid #e6d29c !important;
-        border-left: 4px solid #b89753 !important;
-        padding: 20px !important;
-        border-radius: 2px !important;
-        margin-bottom: 20px;
-    }
-    .question-card {
-        background-color: #f4efe6 !important;
-        border: 1px solid #e3dec3 !important;
-        padding: 15px !important;
-        border-radius: 2px !important;
-        margin-bottom: 15px;
-    }
-    .stImage {
-        width: 100% !important;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        overflow: hidden;
-        border-radius: 2px;
-        background-color: #eae6db;
-        margin-bottom: 8px;
-    }
-    .stImage img {
-        width: 100% !important;
-        height: 210px !important;
-        object-fit: cover !important;
-        border-radius: 1px !important;
-    }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
+from auth.supabase_auth import (
+    can_delete_in_archive,
+    can_investigate,
+    can_manage_lots,
+    can_save_expedient,
+    get_current_role,
+    is_authenticated,
+    role_display_label,
+    sign_out,
+)
+from ui.theme import EDITORIAL_CSS, editorial_button, _web_img_src
+from ui.views.login import build_login_page
+from ui.blueprints import (
+    GEM_CUT_CATALOG,
+    JEWELRY_TYPES,
+    RING_SHANK_PROFILES,
+    SETTING_ARCHITECTURES,
+    SPECIES_DENSITY_MULTIPLIER,
+    _dynamic_blueprint_svg_html,
+    _infer_cad_defaults_from_dictamen,
+    _plain_language_measurement_guide,
+    estimate_carats_from_mm,
+)
+from utils.parsers import (
+    _auto_seed_gemology_from_dictamen,
+    _choice_options,
+    _deduplicate_and_Categorize_dictamen,
+    _extract_product_identity_from_dictamen,
+    _extract_true_market_valuation,
+    _humanize_audit_question,
+    _is_substantive_answer,
+    executive_findings,
+    parse_dictamen_sections,
+    unanswered_questions,
+)
 
-# Inicializar Agente, Librería y Motor de Mercado Dinámico
 agent = LocalAIAgent()
-library = CastleLibrary()
+expert_council = ExpertCouncilOrchestrator(legacy_agent=agent)
 market_engine = MarketEngine()
 
-# ==========================================
-# GESTIÓN DE ESTADO DE NAVEGACIÓN (STATE MACHINE)
-# ==========================================
-if "current_view" not in st.session_state:
-    st.session_state.current_view = "main"
-if "last_dictamen" not in st.session_state:
-    st.session_state.last_dictamen = ""
-if "active_case_id" not in st.session_state:
-    st.session_state.active_case_id = ""
-if "selected_case_id" not in st.session_state:
-    st.session_state.selected_case_id = None
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = 0
+os.makedirs("data/temp", exist_ok=True)
 
-# Función auxiliar para separar el bloque de alertas y el dictamen comercial
-def parse_dictamen_sections(raw_dictamen: str) -> tuple[str, str]:
-    if not raw_dictamen:
-        return "", ""
-    alert_header = "1. ⚠️ ALERTAS DE EXCEPCIÓN Y AUDITORÍA PERICIAL"
-    if alert_header in raw_dictamen:
-        parts = raw_dictamen.split("2. 📌 IDENTIFICACIÓN FORMAL")
-        alerts_part = parts[0].replace(alert_header, "").strip()
-        rest_part = "2. 📌 IDENTIFICACIÓN FORMAL" + parts[1] if len(parts) > 1 else raw_dictamen
-        return alerts_part, rest_part
-    return "", raw_dictamen
+app.add_static_files("/data", "data")
 
-def _question_identifier(text: str) -> str:
-    if not text:
+# Borradores en memoria (expediente analizado pero aún no persistido en Supabase).
+_DRAFT_CASES: dict[str, dict] = {}
+# Caché de descargas de evidencias del bucket privado (misma sesión de proceso).
+_EVIDENCE_DISK_CACHE: dict[str, str] = {}
+
+ROMAN_NUMERALS = [
+    "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
+]
+
+
+
+JEWELRY_RIGOR_INSTRUCTIONS = (
+    "[DIRECTIVA PERICIAL OBLIGATORIA DE ALTA JOYERÍA Y GEMOLOGÍA]: "
+    "1) ARQUITECTURA DE LA JOYA: Respeta estrictamente la tipología, perfil de banda (Shank), tipo de engaste y cotas CAD en mm aportadas por el perito. "
+    "2) CONTEO Y QUILATAJE REAL: Usa exactamente el conteo de piedras centrales y laterales y el quilataje calculado por dimensiones en mm. "
+    "3) HIPÓTESIS DE VALORACIÓN GEMOLÓGICA: Presenta SIEMPRE DOS ESCENARIOS en la tabla de valoración: "
+    "Escenario A (Hipótesis Gema Natural de época/calidad comercial-fina) y Escenario B (Hipótesis Gema Sintética/Simulante o valor intrínseco de metal + hechura). "
+    "4) INTERROGATORIO REALISTA: PROHIBIDO pedir lecturas de refractómetro (RI), espectroscopía, UV 365nm o filtro Chelsea. "
+    "Pide únicamente cotas del plano técnico (Ø interno, ancho de banda, espesor, L×A de gemas), peso en gramos o resultado de comprobación con joyero."
+)
+
+
+def to_roman(idx: int) -> str:
+    if 0 <= idx < len(ROMAN_NUMERALS):
+        return ROMAN_NUMERALS[idx]
+    return str(idx + 1)
+
+
+
+
+# ==========================================
+# GESTOR UNIVERSAL DE SUBIDA DE ARCHIVOS
+# ==========================================
+async def _extract_upload_bytes(e) -> tuple[str, bytes]:
+    raw_name = getattr(e, "name", None)
+    if not raw_name and hasattr(e, "file"):
+        raw_name = getattr(e.file, "name", "evidence.jpg")
+    raw_name = raw_name or "evidence.jpg"
+
+    ext = os.path.splitext(raw_name)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        ext = ".jpg"
+    safe_name = f"ev_{os.urandom(3).hex()}{ext}"
+
+    if hasattr(e, "content") and e.content is not None:
+        data = e.content.read()
+        if hasattr(data, "__await__"):
+            data = await data
+    elif hasattr(e, "file") and e.file is not None:
+        read_res = e.file.read()
+        data = await read_res if hasattr(read_res, "__await__") else read_res
+    else:
+        data = b""
+
+    return safe_name, data
+
+
+
+
+
+def _is_remote_src(path: str) -> bool:
+    return bool(path) and str(path).startswith(("http://", "https://"))
+
+
+def _media_src(path: str) -> str:
+    if not path:
         return ""
-    raw = str(text).strip()
-    numbered = re.match(r"^(\d+)[\.\)\:]\s+", raw)
-    if numbered:
-        return numbered.group(1)
-    labeled = re.search(r"(?i)\b(?:pregunta|cuesti[oó]n|q)\s*[:#\-]?\s*(\d+)\b", raw)
-    if labeled:
-        return labeled.group(1)
+    if _is_remote_src(path):
+        return path
+    if os.path.exists(path):
+        return _web_img_src(path)
+    return get_signed_evidence_url(path) or ""
+
+
+def _gallery_image_src(item: dict) -> str:
+    """URL absoluta firmada (o local) para la miniatura de tarjeta de galería."""
+    candidates: list[str] = []
+    main_path = (item.get("image_path") or "").strip()
+    if main_path:
+        candidates.append(main_path)
+    for path in item.get("evidence_urls") or []:
+        path = (path or "").strip()
+        if path and path not in candidates:
+            candidates.append(path)
+    for path in candidates:
+        if _is_remote_src(path):
+            return path
+        if os.path.exists(path):
+            return _web_img_src(path)
+        signed = get_signed_evidence_url(path)
+        if signed:
+            return signed
     return ""
 
 
-def _normalize_question_text(text: str) -> str:
-    if not text:
-        return ""
-    cleaned = re.sub(r"\[[^\[\]]*\]", "", str(text))
-    cleaned = re.sub(r"[*_`#]+", " ", cleaned)
-    cleaned = re.sub(r"(?i)^(pregunta|cuesti[oó]n)(?:\s+pendiente)?\s*\d+\s*[:.\-]\s*", "", cleaned.strip())
-    cleaned = re.sub(r"^(\d+[\.\)\:]|[-*•])\s+", "", cleaned)
-    cleaned = cleaned.lower()
-    cleaned = re.sub(r"[^\wáéíóúüñ¿?\s]", " ", cleaned)
-    return re.sub(r"\s+", " ", cleaned).strip()
+def _bucket_object_path(src: str) -> str | None:
+    if not src or _is_remote_src(src):
+        return None
+    if os.path.exists(src):
+        return None
+    cleaned = str(src).strip().lstrip("/")
+    if cleaned.startswith("cases/"):
+        return cleaned
+    if cleaned and "/" in cleaned and not os.path.isabs(cleaned):
+        return _normalize_bucket_path_for_cache(cleaned)
+    return None
 
 
-def _question_is_resolved(question: str, resolved_questions: list) -> bool:
-    q_id = _question_identifier(question)
-    q_norm = _normalize_question_text(question)
-    if not q_norm:
-        return False
-    q_core = q_norm[:80]
-    for resolved in resolved_questions or []:
-        res_id = _question_identifier(resolved)
-        res_norm = _normalize_question_text(resolved)
-        if not res_norm:
+def _normalize_bucket_path_for_cache(path: str) -> str:
+    cleaned = str(path or "").lstrip("/")
+    if cleaned.startswith("cases/"):
+        return cleaned
+    return f"cases/{cleaned}"
+
+
+def _fetch_evidence_to_cache(case_id: str, storage_path: str) -> str | None:
+    key = _normalize_bucket_path_for_cache(storage_path)
+    cached = _EVIDENCE_DISK_CACHE.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+    signed = get_signed_evidence_url(key)
+    if not signed:
+        return None
+    folder = os.path.join("data", "temp", "evidence_cache", case_id or "case")
+    os.makedirs(folder, exist_ok=True)
+    ext = os.path.splitext(key)[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        ext = ".jpg"
+    destination = os.path.join(folder, f"{os.path.basename(key).split('.')[0] or 'evidence'}_{len(_EVIDENCE_DISK_CACHE)}{ext}")
+    try:
+        response = requests.get(signed, timeout=10)
+        if response.status_code != 200:
+            return None
+        with open(destination, "wb") as handle:
+            handle.write(response.content)
+        _EVIDENCE_DISK_CACHE[key] = destination
+        return destination
+    except Exception:
+        return None
+
+
+def _materialize_image(src: str, folder: str, index: int, case_id: str = "case") -> str | None:
+    if not src:
+        return None
+    if not _is_remote_src(src) and os.path.exists(src):
+        return src
+    bucket_path = _bucket_object_path(src)
+    if bucket_path:
+        cached = _fetch_evidence_to_cache(case_id, bucket_path)
+        if cached:
+            return cached
+        return None
+    if not _is_remote_src(src):
+        signed = get_signed_evidence_url(src)
+        if not signed:
+            return None
+        src = signed
+    os.makedirs(folder, exist_ok=True)
+    ext = os.path.splitext(str(src).split("?")[0])[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        ext = ".jpg"
+    destination = os.path.join(folder, f"evidence_{index + 1}{ext}")
+    try:
+        response = requests.get(src, timeout=10)
+        if response.status_code != 200:
+            return None
+        with open(destination, "wb") as handle:
+            handle.write(response.content)
+        return destination
+    except Exception:
+        return None
+
+
+def _analysis_image_paths(case_id: str, image_sources: list | None, allow_network: bool) -> list[str]:
+    draft = _DRAFT_CASES.get(case_id)
+    if draft:
+        locals_ = [p for p in (draft.get("local_image_paths") or []) if p and os.path.exists(p)]
+        if locals_:
+            return locals_
+    paths: list[str] = []
+    for src in image_sources or []:
+        if not src:
             continue
-        if q_id and res_id and q_id == res_id:
-            q_tokens = set(w for w in q_norm.split() if len(w) > 3)
-            r_tokens = set(w for w in res_norm.split() if len(w) > 3)
-            if q_tokens and r_tokens and (q_tokens & r_tokens):
-                return True
-        if q_norm == res_norm or q_norm in res_norm or res_norm in q_norm:
-            return True
-        if len(q_core) >= 24 and q_core in res_norm:
-            return True
-        res_core = res_norm[:80]
-        if len(res_core) >= 24 and res_core in q_norm:
-            return True
-    return False
-
-
-def extract_questions_from_alerts(alerts_text: str, resolved_questions: list = None) -> list:
-    if not alerts_text:
-        return []
-    questions = []
-    resolved = resolved_questions or []
-
-    for line in alerts_text.split("\n"):
-        line_s = line.strip()
-        numbered = re.match(r"^(\d+[\.\)\:]|[-*•])\s+", line_s)
-        if not (numbered or "?" in line_s):
+        if os.path.exists(src):
+            paths.append(src)
             continue
-        q_id = _question_identifier(line_s)
-        clean_q = re.sub(r"^(\d+[\.\)\:]|[-*•])\s+", "", line_s).strip()
-        if not clean_q or len(clean_q) <= 8:
-            continue
-        if clean_q.startswith("###") or clean_q.startswith("⚠️"):
-            continue
-        if _question_is_resolved(line_s, resolved) or _question_is_resolved(clean_q, resolved):
-            continue
-        stored = f"{q_id}. {clean_q}" if q_id else clean_q
-        if stored not in questions and clean_q not in questions:
-            questions.append(stored)
-
-    return questions
+        if allow_network:
+            folder = os.path.join("data", "temp", "cloud", case_id or "case", "evidence")
+            local = _materialize_image(src, folder, len(paths), case_id=case_id)
+            if local:
+                paths.append(local)
+    return paths
 
 
-def _flatten_answer_summary(answer_text: str, max_len: int = 110) -> str:
-    flat = sanitize_context_notes(answer_text)
-    if not flat:
-        return ""
-    if flat.lower() in {"pendiente", "n/a", "na", "si", "sí", "no", "-", "."}:
-        return flat.capitalize() if len(flat) > 1 else flat
-    first = re.split(r"(?<=[.!?])\s+", flat)[0].strip()
-    if len(first) > max_len:
-        first = first[: max_len - 1].rsplit(" ", 1)[0] + "…"
-    return first
+def _scratch_case_folder(
+    case_id: str,
+    dictamen_text: str,
+    image_sources: list,
+    allow_network: bool = True,
+) -> tuple[str, list]:
+    folder = os.path.join("data", "temp", "cloud", case_id or "case")
+    evidence_folder = os.path.join(folder, "evidence")
+    os.makedirs(evidence_folder, exist_ok=True)
+    with open(os.path.join(folder, "dictamen.md"), "w", encoding="utf-8") as handle:
+        handle.write(dictamen_text or "")
+    if case_id in _DRAFT_CASES:
+        locals_ = _analysis_image_paths(case_id, image_sources, allow_network=False)
+        return folder, locals_
+    locals_ = _analysis_image_paths(case_id, image_sources, allow_network=allow_network)
+    return folder, locals_
 
 
-def build_flat_context_notes(existing_notes: str, answer_summaries: list) -> str:
-    base = sanitize_context_notes(existing_notes)
-    shorts = [_flatten_answer_summary(item) for item in answer_summaries]
-    shorts = [item for item in shorts if item]
-    if base and shorts:
-        return f"{base}. {'; '.join(shorts)}"
-    if shorts:
-        return "; ".join(shorts)
-    return base or "Sin notas adicionales"
+def get_case_view_model(case_id: str) -> dict:
+    if not case_id:
+        return {}
+    if case_id in _DRAFT_CASES:
+        return dict(_DRAFT_CASES[case_id])
+    meta = cloud_case_metadata(case_id)
+    return dict(meta) if meta else {}
 
-# Función auxiliar para descarga de URLs / Google Drive
+
+def _persist_sources_from_metadata(case_id: str, metadata: dict) -> list:
+    draft = _DRAFT_CASES.get(case_id)
+    if draft and draft.get("local_image_paths"):
+        return [p for p in draft["local_image_paths"] if p and os.path.exists(p)]
+    urls = list(metadata.get("evidence_urls") or [])
+    if not urls and metadata.get("image_path"):
+        urls = [metadata["image_path"]]
+    resolved: list = []
+    for src in urls:
+        if src and os.path.exists(src):
+            resolved.append(src)
+        elif src:
+            resolved.append(src)
+    return resolved
+
+
+def _index_case_embedding_safe(case_id: str, metadata: dict, dictamen_text: str) -> None:
+    try:
+        meta = dict(metadata or {})
+        forensic = meta.get("forensic_report") or {}
+        taxonomy = (meta.get("domain_taxonomy") or forensic.get("taxonomy_key") or "").strip()
+        summary = compose_case_summary_for_embedding(case_id, meta, dictamen_text)
+        upsert_case_embedding(case_id, taxonomy, summary)
+    except Exception as exc:
+        print(f"[RAG] Indexación diferida omitida para {case_id}: {exc}", flush=True)
+
+
+def _finalize_cloud_case(case_id: str, metadata: dict, dictamen_text: str, image_sources: list | None = None):
+    sources = image_sources if image_sources is not None else _persist_sources_from_metadata(case_id, metadata)
+    saved = persist_cloud_case(case_id, metadata, dictamen_text, sources)
+    _index_case_embedding_safe(case_id, metadata, dictamen_text)
+    _DRAFT_CASES.pop(case_id, None)
+    return saved
+
+
+def _case_is_draft(case_id: str) -> bool:
+    return bool(case_id) and case_id in _DRAFT_CASES
+
+
+def _case_archive_state(case_id: str) -> tuple[str, str]:
+    """Etiqueta de cabecera y clase CSS editorial del badge."""
+    if _case_is_draft(case_id):
+        return "BORRADOR EN MEMORIA (NO GUARDADO)", "draft"
+    if get_case(case_id):
+        return "ARCHIVADO EN NUBE", "archived"
+    return "BORRADOR EN MEMORIA (NO GUARDADO)", "draft"
+
+
+def _case_needs_archive(case_id: str) -> bool:
+    if _case_is_draft(case_id):
+        return True
+    return get_case(case_id) is None
+
+
+def _gemology_columns(block: dict) -> dict:
+    metal = (block or {}).get("metal") or {}
+    gem = (block or {}).get("gem") or {}
+    valuation = (block or {}).get("valuation") or {}
+    grams = metal.get("grams")
+    carats = gem.get("carat")
+    piece = valuation.get("piece_eur")
+    return {
+        "applies": bool((block or {}).get("applies")),
+        "subject": (block or {}).get("subject"),
+        "metal_kind": metal.get("kind"),
+        "metal_grams": float(grams) if grams not in (None, "") else None,
+        "total_carats": float(carats) if carats not in (None, "") else None,
+        "valuation_eur": float(piece) if piece not in (None, "") else None,
+    }
+
+
+def _metadata_from_case(case: Case) -> dict:
+    records = sorted(case.gemology_records or [], key=lambda row: row.id or 0)
+    evidences = sorted(case.evidences or [], key=lambda row: (not row.is_main, row.id or 0))
+    raw = dict(records[0].raw_json or {}) if records else {}
+    dossier = raw.pop("_dossier", {}) or {}
+    if not isinstance(dossier, dict):
+        dossier = {}
+    main = next((row for row in evidences if row.is_main), None)
+    image = (main or (evidences[0] if evidences else None))
+    created = case.created_at.timestamp() if case.created_at else 0
+    return {
+        "case_id": case.id,
+        "status": case.status or "active",
+        "custom_brand": case.custom_brand,
+        "custom_title": case.custom_title,
+        "object_description": case.object_description or "",
+        "intake_notes": case.intake_notes or "",
+        "context_notes": case.context_notes or "",
+        "dictamen_text": case.dictamen_text or "",
+        "image_path": image.storage_path if image else "",
+        "evidence_urls": [row.storage_path for row in evidences if row.storage_path],
+        "folder_path": "",
+        "gemology_data": raw,
+        "cad_blueprint": dossier.get("cad_blueprint") or {},
+        "question_answers": dossier.get("question_answers") or {},
+        "resolved_questions": dossier.get("resolved_questions") or [],
+        "logistics_intelligence": dossier.get("logistics_intelligence") or {},
+        "successful_queries": dossier.get("successful_queries") or [],
+        "timestamp": dossier.get("timestamp") or created,
+        "domain_taxonomy": dossier.get("domain_taxonomy") or "",
+        "forensic_report": dossier.get("forensic_report") or {},
+        "market_valuation_report": dossier.get("market_valuation_report") or {},
+        "logistics_arbitrage_report": dossier.get("logistics_arbitrage_report") or {},
+    }
+
+
+def cloud_case_items() -> list:
+    """Orden cronológico, el más antiguo primero, como el archivo local."""
+    return [_metadata_from_case(case) for case in reversed(list_cases())]
+
+
+def cloud_case_metadata(case_id: str) -> dict:
+    case = get_case(case_id) if case_id else None
+    return _metadata_from_case(case) if case else {}
+
+
+def _public_evidence_url(case_id: str, source: str, index: int) -> str | None:
+    if _is_remote_src(source):
+        return source
+    if source and not os.path.exists(source):
+        return str(source).lstrip("/")
+    if not source or not os.path.exists(source):
+        return None
+    ext = os.path.splitext(source)[1].lower() or ".jpg"
+    file_name = f"{case_id}/evidence_{index + 1}_{os.urandom(2).hex()}{ext}"
+    return upload_evidence_to_storage(source, file_name)
+
+
+def persist_cloud_case(
+    case_id: str,
+    metadata: dict,
+    dictamen_text: str,
+    image_sources: list | None = None,
+    status: str | None = None,
+) -> dict:
+    meta = dict(metadata or {})
+    gem_block = dict(meta.get("gemology_data") or {})
+    raw_json = dict(gem_block)
+    raw_json["_dossier"] = {
+        "cad_blueprint": meta.get("cad_blueprint") or {},
+        "question_answers": meta.get("question_answers") or {},
+        "resolved_questions": meta.get("resolved_questions") or [],
+        "logistics_intelligence": meta.get("logistics_intelligence") or {},
+        "successful_queries": meta.get("successful_queries") or [],
+        "timestamp": meta.get("timestamp"),
+        "domain_taxonomy": meta.get("domain_taxonomy") or "",
+        "forensic_report": meta.get("forensic_report") or {},
+        "market_valuation_report": meta.get("market_valuation_report") or {},
+        "logistics_arbitrage_report": meta.get("logistics_arbitrage_report") or {},
+    }
+    columns = _gemology_columns(gem_block)
+    sources = list(image_sources if image_sources is not None else meta.get("evidence_urls") or [])
+    if not sources and meta.get("image_path"):
+        sources = [meta["image_path"]]
+    evidences = []
+    for index, source in enumerate(sources):
+        url = _public_evidence_url(case_id, source, index)
+        if url:
+            evidences.append(Evidence(case_id=case_id, storage_path=url, is_main=index == 0))
+    case = Case(
+        id=case_id,
+        status=status or meta.get("status") or "active",
+        custom_brand=(meta.get("custom_brand") or None),
+        custom_title=(meta.get("custom_title") or None),
+        object_description=meta.get("object_description") or "",
+        intake_notes=meta.get("intake_notes") or "",
+        context_notes=meta.get("context_notes") or "",
+        dictamen_text=dictamen_text or "",
+        gemology_records=[GemologyData(case_id=case_id, raw_json=raw_json, **columns)],
+        evidences=evidences,
+    )
+    stored = save_case(case)
+    return _metadata_from_case(stored)
+
+
+def save_custom_identity(case_id: str, custom_brand: str, custom_title: str):
+    stored = get_case_view_model(case_id)
+    if not stored:
+        return
+    stored["custom_brand"] = (custom_brand or "").strip()
+    stored["custom_title"] = (custom_title or "").strip()
+    if case_id in _DRAFT_CASES:
+        _DRAFT_CASES[case_id] = stored
+    _finalize_cloud_case(case_id, stored, stored.get("dictamen_text") or "")
+
+
+def save_cad_blueprint_and_recalculate(case_id: str, case_folder: str, metadata: dict, cad_data: dict) -> str:
+    stored = dict(get_case_view_model(case_id) or metadata or {})
+
+    stored["cad_blueprint"] = cad_data
+
+    lines = [
+        "[PLIEGO TÉCNICO CAD DE ALTA JOYERÍA VERIFICADO EN MANO (MANDATO ESTRUCTURAL ABSOLUTO)]:",
+        f"- Tipología estructural: {cad_data.get('jewelry_type', 'Anillo / Sortija')}.",
+        f"- Perfil de Banda / Brazo (Shank): {cad_data.get('shank_profile', 'Estándar')}.",
+        f"- Arquitectura de Engaste: {cad_data.get('setting_arch', 'Estándar')}.",
+    ]
+    if cad_data.get("weight_g"):
+        lines.append(f"- Peso bruto exacto en báscula: {cad_data['weight_g']} gramos.")
+    if cad_data.get("cota_a_mm"):
+        lines.append(f"- Cota A (Diámetro interno / Largo): {cad_data['cota_a_mm']} mm.")
+    if cad_data.get("cota_b_mm"):
+        lines.append(f"- Cota B (Ancho de banda / eslabón): {cad_data['cota_b_mm']} mm.")
+    if cad_data.get("cota_c_mm"):
+        lines.append(f"- Cota C (Espesor de aro / metal): {cad_data['cota_c_mm']} mm.")
+    if cad_data.get("cota_d_mm"):
+        lines.append(f"- Cota D (Altura de cabeza / galería): {cad_data['cota_d_mm']} mm.")
+
+    if int(cad_data.get("central_count") or 0) > 0:
+        lines.append(
+            f"- Cota E (Gema Principal / Serie 1): {cad_data['central_count']} unidad(es) de {cad_data.get('central_species')} "
+            f"en corte {cad_data.get('central_cut')}, medidas {cad_data.get('central_l_mm')} × {cad_data.get('central_w_mm')} × {cad_data.get('central_d_mm')} mm "
+            f"(Quilataje geométrico estimado: {cad_data.get('central_ct')} ct)."
+        )
+
+    if int(cad_data.get("side_count") or 0) > 0:
+        lines.append(
+            f"- Cota F (Gemas Secundarias / Hombros / Serie 2 — CORREGIR CONTEO VISUAL CON ESTE DATO): "
+            f"{cad_data['side_count']} unidad(es) de {cad_data.get('side_species')} en corte {cad_data.get('side_cut')}, "
+            f"medidas {cad_data.get('side_l_mm')} × {cad_data.get('side_w_mm')} mm "
+            f"(Quilataje geométrico total: {cad_data.get('side_ct')} ct)."
+        )
+
+    lines.append(f"- Quilataje Total Conjunto Calculado: {cad_data.get('total_ct', 0)} ct.")
+    lines.append(f"- Hipótesis / Verificación Gemológica: {cad_data.get('gem_hypothesis', 'Evaluar Ambas Hipótesis')}.")
+    if cad_data.get("extra_observations"):
+        lines.append(f"- Observaciones de taller: {cad_data['extra_observations']}.")
+
+    lines.append(JEWELRY_RIGOR_INSTRUCTIONS)
+    spot_info = market_engine.get_metal_spot_prices()
+    lines.append(f"[SPOT MARKET DATA - Gold: {spot_info.get('GOLD_EUR_PER_GRAM')}€/g, Silver: {spot_info.get('SILVER_EUR_PER_GRAM')}€/g]")
+
+    base_notes = stored.get("intake_notes") or ""
+    combined_context = f"{base_notes}\n\n" + "\n".join(lines)
+    stored["context_notes"] = combined_context
+
+    if cad_data.get("weight_g"):
+        try:
+            g_num = float(str(cad_data["weight_g"]).replace(",", "."))
+            gem_blk = normalize_gemology_data(stored.get("gemology_data"))
+            gem_blk["metal"]["grams"] = g_num
+            if float(cad_data.get("total_ct") or 0) > 0:
+                gem_blk["gem"]["carat"] = float(cad_data["total_ct"])
+            stored["gemology_data"] = gem_blk
+        except Exception:
+            pass
+
+    allow_net = case_id not in _DRAFT_CASES
+    images = _analysis_image_paths(case_id, stored.get("evidence_urls") or [], allow_network=allow_net)
+    updated = agent.analyze_evidence(
+        object_description=stored.get("custom_title") or stored.get("object_description", "Joya peritada con plano CAD"),
+        context_notes=combined_context,
+        image_paths=images,
+        case_id=case_id,
+        persist_case=False,
+    )
+    if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
+        return updated
+    stored["context_notes"] = combined_context
+    stored["dictamen_text"] = updated
+    if case_id in _DRAFT_CASES:
+        _DRAFT_CASES[case_id] = stored
+    else:
+        _finalize_cloud_case(case_id, stored, updated)
+    return updated
+
+
+
+
+def commit_ficha_answers(case_id: str, case_folder: str, metadata: dict, pending_questions: list, answers_by_index: dict, files_by_index: dict):
+    stored = dict(get_case_view_model(case_id) or metadata or {})
+    evidence_folder = os.path.join("data", "temp", "cloud", case_id or "case", "answers")
+    os.makedirs(evidence_folder, exist_ok=True)
+    new_locals = []
+    newly_resolved = list(stored.get("resolved_questions") or [])
+    for index, question in enumerate(pending_questions):
+        answer = answers_by_index.get(index, "")
+        answer = answer.strip() if isinstance(answer, str) else ""
+        uploaded_bytes = files_by_index.get(index)
+        if _is_substantive_answer(answer) and question not in newly_resolved:
+            newly_resolved.append(question)
+        if uploaded_bytes is not None:
+            name, content = uploaded_bytes
+            extension = os.path.splitext(name)[1] or ".jpg"
+            destination = os.path.join(evidence_folder, f"evidence_q{index+1}_{os.urandom(2).hex()}{extension}")
+            with open(destination, "wb") as handle:
+                handle.write(content)
+            new_locals.append(destination)
+
+    updated_state = apply_interrogation_update(stored, pending_questions, answers_by_index)
+    stored["resolved_questions"] = newly_resolved
+    stored["intake_notes"] = updated_state["intake_notes"]
+    stored["question_answers"] = updated_state["question_answers"]
+    stored["context_notes"] = updated_state["intake_notes"]
+    allow_net = case_id not in _DRAFT_CASES
+    images = _analysis_image_paths(case_id, stored.get("evidence_urls") or [], allow_network=allow_net)
+    images.extend(new_locals)
+    prompt_ctx = (updated_state.get("prompt_context") or "") + "\n\n" + JEWELRY_RIGOR_INSTRUCTIONS
+    updated = agent.analyze_evidence(
+        object_description=stored.get("object_description", "Pieza peritada"),
+        context_notes=prompt_ctx,
+        image_paths=images,
+        case_id=case_id,
+        persist_case=False,
+    )
+    if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
+        return updated
+    stored["dictamen_text"] = updated
+    if case_id in _DRAFT_CASES:
+        stored["local_image_paths"] = list(images)
+        stored["evidence_urls"] = list(images)
+        _DRAFT_CASES[case_id] = stored
+    else:
+        sources = list(stored.get("evidence_urls") or []) + new_locals
+        _finalize_cloud_case(case_id, stored, updated, sources)
+    return updated
+
+
+def persist_logistics_intelligence(case_id: str, block: dict):
+    stored = get_case_view_model(case_id)
+    if not stored:
+        return
+    stored["logistics_intelligence"] = block
+    if case_id in _DRAFT_CASES:
+        _DRAFT_CASES[case_id] = stored
+        return
+    _finalize_cloud_case(case_id, stored, stored.get("dictamen_text") or "")
+
+
+def persist_gemology(case_id: str, block: dict, dictamen_text: str) -> str:
+    stored = get_case_view_model(case_id)
+    if not stored:
+        return dictamen_text
+    block["_user_saved"] = True
+    stored["gemology_data"] = block
+    section = dictamen_section(block, block.get("valuation") or {})
+    updated = upsert_dictamen(dictamen_text, section)
+    stored["dictamen_text"] = updated
+    if case_id in _DRAFT_CASES:
+        _DRAFT_CASES[case_id] = stored
+    _finalize_cloud_case(case_id, stored, updated)
+    return updated
+
+
 def download_image_from_url(url, save_dir="data/temp"):
     os.makedirs(save_dir, exist_ok=True)
     try:
@@ -283,428 +719,1214 @@ def download_image_from_url(url, save_dir="data/temp"):
         pass
     return None
 
+
+def _lot_pieces() -> list:
+    pieces = []
+    for item in cloud_case_items():
+        case_id = item.get("case_id")
+        dictamen = item.get("dictamen_text") or ""
+        maker, real_name = _extract_product_identity_from_dictamen(dictamen, item)
+        pieces.append({
+            "case_id": case_id,
+            "maker": maker,
+            "label": real_name,
+            "metadata": item,
+            "dictamen": dictamen,
+            "image_path": item.get("image_path") or "",
+            "folder": "",
+        })
+    return pieces
+
+
+def _piece_thumbnail(piece: dict) -> str | None:
+    image_path = piece.get("image_path") or ""
+    if _is_remote_src(image_path) or (image_path and os.path.exists(image_path)):
+        return image_path
+    return None
+
+
+def _piece_metrics(row: dict) -> str:
+    if row.get("piece_eur") is None:
+        return "Sin tasación cerrada"
+    parts = [row.get("source") or "dictamen"]
+    band = (row.get("band") or "").strip()
+    if band:
+        parts.append(band)
+    if row.get("metal_eur"):
+        parts.append(f"Metal {format_gem_eur(row['metal_eur'])}")
+    if row.get("gem_eur"):
+        parts.append(f"Gemas {format_gem_eur(row['gem_eur'])}")
+    if row.get("pearl_eur"):
+        parts.append(f"Perlas {format_gem_eur(row['pearl_eur'])}")
+    return " · ".join(parts)
+
+
+def _case_card_summary(item: dict) -> tuple[str, str, str, str]:
+    cid = item.get("case_id")
+    meta = item
+    dictamen = item.get("dictamen_text") or ""
+
+    maker, real_title = _extract_product_identity_from_dictamen(dictamen, meta)
+    val_info = _extract_true_market_valuation(dictamen, meta)
+    price_str = val_info["display"]
+
+    findings = dict(executive_findings(dictamen))
+    extra = findings.get("Datación") or findings.get("Acabado Noble") or findings.get("Contraste") or "Expediente autenticado"
+    excerpt = f"Ref. {cid} · {extra}."
+    if len(excerpt) > 85:
+        excerpt = excerpt[:82].rstrip() + "…"
+
+    return maker, real_title, price_str, excerpt
+
+
+def _lot_brief_html(report: dict) -> str:
+    exit_plan = report["exit"]
+    piece_count = report["valued_count"] + report["pending_count"]
+    fee = ""
+    if report.get("setting_fee_eur"):
+        fee = f"<div><span>Peritaje</span><strong>{format_gem_eur(report['setting_fee_eur'])}</strong></div>"
+    return (
+        "<div class='lot-brief'>"
+        "<div class='lot-brief-top'>"
+        "<div>"
+        f"<p class='lot-kicker'>{html.escape(report['strategy'])} · {html.escape(str(report['lot_id']))}</p>"
+        f"<h3 class='lot-title'>{html.escape(report['name'])}</h3>"
+        f"<p class='lot-count'>{piece_count} {'pieza' if piece_count == 1 else 'piezas'}</p>"
+        "</div>"
+        "<div class='lot-total'>"
+        "<p class='lot-kicker'>Tasación acumulada</p>"
+        f"<p class='lot-figure'>{format_gem_eur(report['total_eur'])}</p>"
+        "</div></div>"
+        "<div class='lot-metrics'>"
+        f"<div><span>Metal</span><strong>{format_gem_eur(report['metal_eur'])}</strong></div>"
+        f"<div><span>Gemas</span><strong>{format_gem_eur(report['gem_eur'])}</strong></div>"
+        f"<div><span>Perlas</span><strong>{format_gem_eur(report['pearl_eur'])}</strong></div>"
+        f"<div><span>Autoría</span><strong>{format_gem_eur(report['authorship_eur'])}</strong></div>"
+        f"{fee}</div>"
+        "<div class='lot-exit'>"
+        "<div><p class='lot-kicker'>Comprador</p>"
+        f"<p>{html.escape(exit_plan['buyer'])}</p></div>"
+        "<div><p class='lot-kicker'>Mercado</p>"
+        f"<p>{html.escape(exit_plan['market'])}</p></div>"
+        "</div>"
+        f"<p class='lot-reason'>{html.escape(exit_plan['reason'])}</p>"
+        "</div>"
+    )
+
+
+def _case_evidence_paths(folder: str, fallback: str = "") -> list:
+    paths = []
+    evidence = os.path.join(folder or "", "evidence")
+    if os.path.isdir(evidence):
+        for name in sorted(os.listdir(evidence)):
+            if name.lower().endswith(("png", "jpg", "jpeg", "webp")):
+                paths.append(os.path.join(evidence, name))
+    if not paths and fallback and os.path.exists(fallback):
+        paths.append(fallback)
+    return paths
+
+
 # ==========================================
-# VISTA 1: MAIN PANEL (TWO-COLUMN LAYOUT)
+# APLICACIÓN PRINCIPAL NICEGUI
 # ==========================================
-if st.session_state.current_view == "main":
-    
-    st.markdown("<h1 style='text-align: center; color: #1a1a1a; margin-top: 1rem; font-size: 2.2rem;'>DIVISIÓN DE PERITAJE Y AUTENTICACIÓN FORENSE</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #666666; font-size: 0.95rem; margin-bottom: 2rem; letter-spacing: 0.5px;'>Sistema autónomo de investigación documental y material para alta relojería y objetos de valor</p>", unsafe_allow_html=True)
-    st.markdown("<hr style='border: none; border-top: 1px solid #e3dec3; margin-bottom: 2.5rem;'>", unsafe_allow_html=True)
+@ui.page("/login")
+def login_page():
+    build_login_page()
 
-    col_left, col_right = st.columns([1, 1.3], gap="large")
 
-    with col_left:
-        st.markdown("### Archivo Histórico")
-        st.markdown("<p style='color: #666; font-size: 0.9rem;'>Acceso directo al registro general de peritajes realizados.</p>", unsafe_allow_html=True)
-        
-        if st.button("Ver Archivo Completo de Casos", use_container_width=True):
-            st.session_state.current_view = "library"
-            st.rerun()
-            
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("#### Últimos Expedientes Registrados")
-        
-        all_cases = library.get_all_cases()
-        recent_cases = all_cases[-3:][::-1]
-        
-        if not recent_cases:
-            st.markdown("<p style='color: #888; font-style: italic; font-size: 0.9rem;'>No hay peritajes registrados en el sistema.</p>", unsafe_allow_html=True)
-        else:
-            for item in recent_cases:
-                c_id = item.get("case_id")
-                clean_name = item.get("context_notes") if (item.get("context_notes") and item.get("context_notes") != "Sin notas adicionales") else item.get("object_description", "Objeto peritado")
-                if "analizada por visión" in clean_name:
-                    clean_name = "Pieza de Alta Gama"
-                img_p = item.get("image_path")
-                
-                with st.container():
-                    st.markdown("<div class='editorial-card'>", unsafe_allow_html=True)
-                    sub_c1, sub_c2 = st.columns([1, 1.5])
-                    with sub_c1:
-                        if img_p and os.path.exists(img_p):
-                            st.image(img_p, use_container_width=True)
-                        else:
-                            st.markdown("<span style='font-size:0.8rem; color:#888;'>Sin miniatura</span>", unsafe_allow_html=True)
-                    with sub_c2:
-                        st.markdown(f"**{clean_name}**")
-                        st.markdown(f"<p style='font-size: 0.75rem; color: #888; margin-bottom: 6px;'>Ref: {c_id}</p>", unsafe_allow_html=True)
-                        if st.button("Ver Ficha", key=f"btn_quick_{c_id}", use_container_width=True):
-                            st.session_state.selected_case_id = c_id
-                            st.session_state.current_view = "detail"
-                            st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
+@ui.page("/")
+def index_page():
+    if not is_authenticated():
+        ui.navigate.to("/login")
+        return
 
-    with col_right:
-        st.markdown("### Nuevo Peritaje Activo")
-        st.markdown("<p style='color: #666; font-size: 0.9rem;'>Cargue las tomas fotográficas o proporcione enlaces para iniciar la investigación, tasación y Buyer Search.</p>", unsafe_allow_html=True)
-        
+    ui.add_head_html(EDITORIAL_CSS)
+    ui.page_title("CH Curiosities Hunter")
+
+    state = {
+        "current_view": "main",
+        "last_dictamen": "",
+        "active_case_id": "",
+        "selected_case_id": None,
+        "uploaded_paths": [],
+        "detail_tab": "sintesis",
+    }
+
+    with ui.dialog() as zoom_dialog, ui.card().classes("bg-[#F3EFE6] border border-[#141413] rounded-none p-4 max-w-3xl w-full shadow-none"):
+        zoom_title = ui.label("").classes("micro-coord mb-2")
+        zoom_img = ui.image("").classes("w-full max-h-[75vh] object-contain border border-[#141413]")
+        with ui.row().classes("w-full justify-end mt-3"):
+            editorial_button("CERRAR", on_click=zoom_dialog.close)
+
+    def open_zoom(img_path: str, caption: str = ""):
+        zoom_title.text = caption
+        zoom_img.set_source(img_path)
+        zoom_dialog.open()
+
+    root_container = ui.column().classes("w-full max-w-[1360px] mx-auto px-4 md:px-10 py-6 gap-0")
+
+    def navigate(view_name: str, case_id: str = None):
+        state["current_view"] = view_name
+        if case_id is not None:
+            state["selected_case_id"] = case_id
+            state["detail_tab"] = "sintesis"
+        refresh_ui()
+
+    def render_top_bar(section_code: str = "CH-01"):
+        all_count = len(cloud_case_items())
         spot_info = market_engine.get_metal_spot_prices()
-        st.markdown(f"<p style='font-size: 0.8rem; color: #889753; background-color: #f2efe9; padding: 6px 10px; border-radius: 2px; border-left: 3px solid #b89753;'>⚡ Grounding Activo — Spot Oro: {spot_info.get('GOLD_EUR_PER_GRAM')} €/g | Plata: {spot_info.get('SILVER_EUR_PER_GRAM')} €/g</p>", unsafe_allow_html=True)
+        session_email = (app.storage.user.get("auth_session") or {}).get("email") or ""
+        role_badge = role_display_label(get_current_role())
+        user_line = f"{html.escape(role_badge)}"
+        if session_email:
+            user_line += f" · {html.escape(session_email)}"
+        with ui.row().classes("w-full justify-between items-center pb-2 border-b border-[#141413] mb-6"):
+            with ui.column().classes("gap-1"):
+                ui.html(f"<span class='micro-coord'>{html.escape(section_code)} // CH CURIOSITIES HUNTER</span>")
+                ui.html(f"<span class='editorial-status-badge editorial-status-badge--archived'>{user_line}</span>")
+            with ui.row().classes("gap-4 items-center"):
+                editorial_button("PANEL PRINCIPAL", on_click=lambda: navigate("main"), small=True)
+                ui.html("<span class='text-[#141413]'>/</span>")
+                editorial_button(f"ARCHIVO ({all_count})", on_click=lambda: navigate("library"), small=True)
+                ui.html("<span class='text-[#141413]'>/</span>")
+                editorial_button("LOTES COMERCIALES", on_click=lambda: navigate("lots"), small=True)
+                ui.html("<span class='text-[#141413]'>/</span>")
 
-        source_mode = st.radio("Fuente de Ingesta", ["Archivos Locales", "URL / Google Drive"], horizontal=True, label_visibility="collapsed")
-        
-        image_paths = []
-        if source_mode == "Archivos Locales":
-            current_uploader_key = f"uploader_{st.session_state.uploader_key}"
-            uploaded_files = st.file_uploader(
-                "Seleccionar evidencias fotográficas (JPG, PNG)",
-                type=["jpg", "jpeg", "png"],
-                accept_multiple_files=True,
-                key=current_uploader_key
+                def close_session():
+                    sign_out()
+                    ui.navigate.to("/login")
+
+                editorial_button("CERRAR SESIÓN", on_click=close_session, small=True)
+            ui.html(
+                f"<span class='micro-coord text-[#141413]'>"
+                f"SPOT ORO {spot_info.get('GOLD_EUR_PER_GRAM')} €/G · PLATA {spot_info.get('SILVER_EUR_PER_GRAM')} €/G"
+                f"</span>"
             )
-            if uploaded_files:
-                os.makedirs("data/temp", exist_ok=True)
-                cols_preview = st.columns(min(len(uploaded_files), 3))
-                for idx, uf in enumerate(uploaded_files):
-                    tmp_p = os.path.join("data/temp", uf.name)
-                    with open(tmp_p, "wb") as f:
-                        f.write(uf.getbuffer())
-                    image_paths.append(tmp_p)
-                    with cols_preview[idx % len(cols_preview)]:
-                        st.image(uf, caption=f"Evidencia {idx+1}", use_container_width=True)
-        else:
-            urls_text = st.text_area("Enlaces de imágenes (uno por línea)", placeholder="https://... o enlace compartido de Google Drive")
-            if urls_text:
-                url_list = [u.strip() for u in urls_text.split("\n") if u.strip()]
-                cols_preview = st.columns(min(len(url_list), 3))
-                for idx, u in enumerate(url_list):
-                    dl_path = download_image_from_url(u)
-                    if dl_path:
-                        image_paths.append(dl_path)
-                        with cols_preview[idx % len(cols_preview)]:
-                            st.image(dl_path, caption=f"Evidencia Nube {idx+1}", use_container_width=True)
-                    else:
-                        st.warning(f"No se pudo procesar el enlace: {u}")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        extra_notes = st.text_input("Notas de Referencia o Cuños Visibles (Incluir caja/dotación si aplica)", placeholder="Ej. Con caja original, número de serie...")
+    def render_catalog_card(item: dict, idx: int, show_delete: bool = False):
+        c_id = item.get("case_id")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Ejecutar Investigación, Tasación y Buyer Search", use_container_width=True):
-            if not image_paths:
-                st.warning("Por favor, aporte al menos una evidencia fotográfica válida.")
+        maker, real_title, price_str, excerpt = _case_card_summary(item)
+        roman = to_roman(idx)
+        web_src = _gallery_image_src(item)
+
+        with ui.element("div").classes("catalog-card w-full"):
+            with ui.column().classes("w-full gap-0"):
+                if web_src:
+                    with ui.element("div").classes("catalog-img-frame"):
+                        ui.image(web_src).props('fit=cover no-spinner').classes("w-full h-full")
+                else:
+                    ui.html("<div class='catalog-img-frame flex items-center justify-center'><span class='micro-coord'>SIN IMAGEN</span></div>")
+
+                ui.html(f"<div class='catalog-roman'>{roman}</div>")
+                ui.html(f"<div class='catalog-brand'>{html.escape(maker)}</div>")
+                ui.html(
+                    f"<div class='catalog-row'>"
+                    f"<span class='catalog-title-text' title='{html.escape(real_title)}'>{html.escape(real_title)}</span>"
+                    f"<span class='catalog-price-text'>{html.escape(price_str)}</span>"
+                    f"</div>"
+                )
+                ui.html(f"<p class='catalog-excerpt'>{html.escape(excerpt)}</p>")
+
+            with ui.row().classes("w-full justify-between items-center pt-2"):
+                editorial_button("ABRIR FICHA", on_click=lambda _, cid=c_id: navigate("detail", cid))
+                if show_delete and can_delete_in_archive():
+                    def _del(cid=c_id):
+                        delete_cloud_case(cid)
+                        refresh_ui()
+                    editorial_button("ELIMINAR", on_click=_del, small=True)
+
+    def refresh_ui():
+        root_container.clear()
+        with root_container:
+            view = state["current_view"]
+            if view == "main":
+                build_main_view()
+            elif view == "result":
+                build_result_view()
+            elif view == "library":
+                build_library_view()
+            elif view == "lots":
+                build_lots_view()
+            elif view == "detail":
+                build_detail_view()
+
+    # ------------------------------------------
+    # VISTA 1: MAIN PANEL
+    # ------------------------------------------
+    def build_main_view():
+        render_top_bar("CH-CORE // 01")
+
+        with ui.column().classes("w-full items-center py-6 border-b border-[#141413] mb-0"):
+            ui.html("<h1 class='masthead-title text-center m-0'>CH CURIOSITIES HUNTER</h1>")
+            ui.html(
+                "<p class='micro-coord text-center mt-2 mb-0'>"
+                "PERITAJE FORENSE · AUTENTICACIÓN DOCUMENTAL Y MATERIAL · BUYER SEARCH"
+                "</p>"
+            )
+
+        with ui.column().classes("w-full py-8 border-b border-[#141413] gap-5"):
+            if can_investigate():
+                with ui.row().classes("w-full justify-between items-baseline"):
+                    ui.html("<span class='micro-coord'>01 // CÁMARA DE INGESTA + EVIDENCIA HUMANA EN MANO</span>")
+                    ui.html("<span class='micro-coord'>ANÁLISIS MULTIMODAL + GEMOLOGÍA ACTIVA</span>")
             else:
-                case_id = f"EXP-CH-{os.urandom(2).hex().upper()}"
-                obj_desc = extra_notes if extra_notes else "Pieza de alta gama analizada por visión artificial"
-                
-                market_context_notes = f"{extra_notes} [SPOT MARKET DATA - Gold: {spot_info.get('GOLD_EUR_PER_GRAM')}€/g, Silver: {spot_info.get('SILVER_EUR_PER_GRAM')}€/g]"
-                
-                with st.spinner("Consultando metales en tiempo real y conectando con motores de análisis..."):
-                    dictamen_text = agent.analyze_evidence(
-                        object_description=obj_desc,
-                        context_notes=market_context_notes,
-                        image_paths=image_paths,
-                        case_id=case_id
+                ui.html(
+                    "<p class='micro-coord text-[#625E57] m-0'>"
+                    "Modo consulta: puede revisar expedientes archivados. La ingesta y el análisis activo requieren perfil analista o administrador."
+                    "</p>"
+                )
+
+            if can_investigate():
+                with ui.row().classes("w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-start"):
+                    with ui.column().classes("lg:col-span-5 w-full gap-3"):
+                        ui.html("<h2 class='text-4xl m-0'>Nuevo Peritaje Activo</h2>")
+                        ui.html(
+                            "<p class='text-xs text-[#625E57] leading-relaxed m-0'>"
+                            "Suba las fotografías de la pieza y aporte cualquier dato físico verificado en mano "
+                            "(peso, medidas en mm, conteo real de piedras o contrastes) para ajustar el ojo gemológico."
+                            "</p>"
+                        )
+                        source_radio = ui.radio(["Archivos Locales", "URL / Google Drive"], value="Archivos Locales").props("inline dense color=dark").classes("mt-2")
+
+                    with ui.column().classes("lg:col-span-7 w-full gap-3"):
+                        state["uploaded_paths"] = []
+                        upload_container = ui.column().classes("w-full gap-3")
+                        preview_row = ui.row().classes("w-full flex-wrap gap-4")
+    
+                        def refresh_previews():
+                            preview_row.clear()
+                            with preview_row:
+                                for idx, p in enumerate(state["uploaded_paths"]):
+                                    if os.path.exists(p):
+                                        w_src = _web_img_src(p)
+                                        with ui.column().classes("thumb-strip-item gap-1").on("click", lambda _, path=p, i=idx: open_zoom(path, f"IMAGE 0{i+1}")):
+                                            ui.html(f"<span class='micro-coord'>IMAGE 0{idx+1}</span>")
+                                            ui.html(f"<div class='thumb-frame'><img src='{html.escape(w_src)}'/></div>")
+    
+                        async def handle_local_upload(e):
+                            os.makedirs("data/temp", exist_ok=True)
+                            safe_name, data = await _extract_upload_bytes(e)
+                            if not data:
+                                ui.notify("No se pudieron leer los bytes de la imagen.", type="negative")
+                                return
+                            tmp_p = os.path.join("data/temp", safe_name)
+                            with open(tmp_p, "wb") as f:
+                                f.write(data)
+                            state["uploaded_paths"].append(tmp_p)
+                            refresh_previews()
+                            ui.notify(f"Evidencia fotográfica cargada ({len(state['uploaded_paths'])})", type="positive")
+    
+                        urls_input_ref = {"widget": None}
+    
+                        def render_source_input():
+                            upload_container.clear()
+                            state["uploaded_paths"] = []
+                            preview_row.clear()
+                            with upload_container:
+                                if source_radio.value == "Archivos Locales":
+                                    ui.upload(
+                                        label="SELECCIONAR EVIDENCIAS FOTOGRÁFICAS (JPG, PNG)",
+                                        multiple=True,
+                                        auto_upload=True,
+                                        on_upload=handle_local_upload
+                                    ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+                                else:
+                                    urls_area = ui.textarea(
+                                        label="Enlaces de imágenes (uno por línea)",
+                                        placeholder="https://... o enlace compartido de Google Drive"
+                                    ).classes("w-full px-3 border border-[#141413]")
+                                    urls_input_ref["widget"] = urls_area
+    
+                                    def load_urls():
+                                        state["uploaded_paths"] = []
+                                        raw = urls_area.value or ""
+                                        for u in [x.strip() for x in raw.split("\n") if x.strip()]:
+                                            dl = download_image_from_url(u)
+                                            if dl:
+                                                state["uploaded_paths"].append(dl)
+                                            else:
+                                                ui.notify(f"No se pudo procesar el enlace: {u}", type="warning")
+                                        refresh_previews()
+    
+                                    editorial_button("PREVISUALIZAR ENLACES", on_click=load_urls)
+    
+                        source_radio.on_value_change(lambda _: render_source_input())
+                        render_source_input()
+    
+                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
+                            in_weight = ui.input(label="Peso en gramos (opcional)", placeholder="Ej. 4.8 g").classes("w-full px-2 border border-[#141413]")
+                            in_dimensions = ui.input(label="Talla / Diámetro / Ancho (mm)", placeholder="Ej. Ø 17mm, banda 4mm").classes("w-full px-2 border border-[#141413]")
+                            in_gems = ui.input(label="Conteo y medidas de piedras", placeholder="Ej. 7 esmeraldas y 5 diamantes (2.5mm)").classes("w-full px-2 border border-[#141413]")
+    
+                        extra_notes = ui.input(
+                            label="CUÑOS VISIBLES, HISTORIA O NOTAS DE REFERENCIA",
+                            placeholder="Ej. Contraste 750 en interior de aro, estuche original..."
+                        ).classes("w-full px-3 py-1 border border-[#141413]")
+    
+                        status_label = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+    
+                        async def run_investigation():
+                            if source_radio.value == "URL / Google Drive" and not state["uploaded_paths"] and urls_input_ref["widget"]:
+                                raw = urls_input_ref["widget"].value or ""
+                                for u in [x.strip() for x in raw.split("\n") if x.strip()]:
+                                    dl = await run.io_bound(download_image_from_url, u)
+                                    if dl:
+                                        state["uploaded_paths"].append(dl)
+    
+                            if not state["uploaded_paths"]:
+                                ui.notify("Por favor, aporte al menos una evidencia fotográfica válida.", type="warning")
+                                return
+    
+                            status_label.text = "⏳ ANALIZANDO EVIDENCIAS EN SEGUNDO PLANO (SIN DESCONEXIÓN DE SERVIDOR)..."
+                            status_label.classes(remove="hidden")
+    
+                            spot_info = market_engine.get_metal_spot_prices()
+                            case_id = f"EXP-CH-{os.urandom(2).hex().upper()}"
+    
+                            human_parts = []
+                            if (in_weight.value or "").strip():
+                                human_parts.append(f"Peso físico: {in_weight.value.strip()}")
+                            if (in_dimensions.value or "").strip():
+                                human_parts.append(f"Medidas/Diámetro/Banda: {in_dimensions.value.strip()}")
+                            if (in_gems.value or "").strip():
+                                human_parts.append(f"Conteo y medidas reales de gemas verificadas por humano: {in_gems.value.strip()}")
+                            if (extra_notes.value or "").strip():
+                                human_parts.append(f"Notas adicionales: {extra_notes.value.strip()}")
+    
+                            notes_val = " | ".join(human_parts)
+                            obj_desc = notes_val if notes_val else "Pieza de joyería/colección analizada por visión artificial"
+                            market_context_notes = (
+                                f"{notes_val}\n\n{JEWELRY_RIGOR_INSTRUCTIONS}\n"
+                                f"[SPOT MARKET DATA - Gold: {spot_info.get('GOLD_EUR_PER_GRAM')}€/g, Silver: {spot_info.get('SILVER_EUR_PER_GRAM')}€/g]"
+                            )
+    
+                            council_fn = partial(
+                                expert_council.run_investigation,
+                                obj_desc,
+                                market_context_notes,
+                                list(state["uploaded_paths"]),
+                                case_id,
+                                agent,
+                                JEWELRY_RIGOR_INSTRUCTIONS,
+                            )
+                            investigation = await run.io_bound(council_fn)
+                            dictamen_text = investigation.get("dictamen_text", "")
+                            draft_extras = investigation.get("draft_extras") or {}
+                            if str(dictamen_text).startswith("[ERR"):
+                                ui.notify(str(dictamen_text), type="negative")
+                                return
+                            _DRAFT_CASES[case_id] = {
+                                "case_id": case_id,
+                                "status": "draft",
+                                "object_description": obj_desc,
+                                "intake_notes": notes_val,
+                                "context_notes": market_context_notes,
+                                "dictamen_text": dictamen_text,
+                                "local_image_paths": list(state["uploaded_paths"]),
+                                "evidence_urls": list(state["uploaded_paths"]),
+                                "image_path": state["uploaded_paths"][0] if state["uploaded_paths"] else "",
+                                "timestamp": time.time(),
+                                "gemology_data": {},
+                                "cad_blueprint": dict(draft_extras.get("cad_blueprint") or {}),
+                                "domain_taxonomy": draft_extras.get("domain_taxonomy") or "",
+                                "forensic_report": draft_extras.get("forensic_report") or {},
+                                "market_valuation_report": draft_extras.get("market_valuation_report") or {},
+                                "logistics_arbitrage_report": draft_extras.get("logistics_arbitrage_report") or {},
+                                "question_answers": {},
+                                "resolved_questions": [],
+                                "logistics_intelligence": {},
+                                "successful_queries": draft_extras.get("successful_queries") or [],
+                            }
+                            state["last_dictamen"] = dictamen_text
+                            state["active_case_id"] = case_id
+                            state["selected_case_id"] = case_id
+                            navigate("detail", case_id)
+    
+                        with ui.row().classes("w-full justify-end pt-2"):
+                            editorial_button("EJECUTAR INVESTIGACIÓN Y TASACIÓN", on_click=run_investigation)
+
+        with ui.column().classes("w-full py-8 gap-6"):
+            with ui.row().classes("w-full justify-between items-end border-b border-[#141413] pb-3"):
+                with ui.column().classes("gap-1"):
+                    ui.html("<span class='micro-coord'>02 // ARCHIVO RECIENTE DE EXPEDIENTES</span>")
+                    ui.html("<h2 class='text-3xl m-0'>Últimos Casos Registrados</h2>")
+                with ui.row().classes("gap-3"):
+                    editorial_button("VER ARCHIVO COMPLETO", on_click=lambda: navigate("library"))
+                    editorial_button("LOTES COMERCIALES", on_click=lambda: navigate("lots"))
+
+            all_cases = cloud_case_items()
+            recent_cases = all_cases[-6:][::-1]
+
+            if not recent_cases:
+                ui.html("<p class='text-[#625E57] italic text-xs py-8'>No hay peritajes registrados en el sistema.</p>")
+            else:
+                with ui.row().classes("w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"):
+                    for idx, item in enumerate(recent_cases):
+                        render_catalog_card(item, idx, show_delete=False)
+
+    # ------------------------------------------
+    # VISTA 2: RESULT SCREEN
+    # ------------------------------------------
+    def build_result_view():
+        active_case = state.get("active_case_id")
+        if active_case:
+            state["selected_case_id"] = active_case
+            build_detail_view()
+        else:
+            build_main_view()
+
+    # ------------------------------------------
+    # VISTA 3: LIBRARY
+    # ------------------------------------------
+    def build_library_view():
+        render_top_bar("CH-ARCHIVE // 03")
+
+        with ui.column().classes("w-full items-center py-5 border-b border-[#141413] mb-8"):
+            ui.html("<h1 class='masthead-title text-center m-0'>CH CURIOSITIES HUNTER — ARCHIVE</h1>")
+            ui.html("<p class='micro-coord mt-2'>CATÁLOGO GENERAL DE PIEZAS AUTENTICADAS Y VALORADAS</p>")
+
+        cases = cloud_case_items()
+        if not cases:
+            ui.html("<p class='text-center text-[#625E57] w-full py-12'>No existen casos registrados en el sistema.</p>")
+        else:
+            with ui.row().classes("w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"):
+                for idx, item in enumerate(cases):
+                    render_catalog_card(item, idx, show_delete=can_delete_in_archive())
+
+    # ------------------------------------------
+    # VISTA 4: LOTES COMERCIALES
+    # ------------------------------------------
+    def build_lots_view():
+        render_top_bar("CH-LOTS // 04")
+        pieces = _lot_pieces()
+        by_id = {piece["case_id"]: piece for piece in pieces}
+        lots = load_lots()
+
+        with ui.column().classes("w-full items-center py-5 border-b border-[#141413] mb-6"):
+            ui.html("<h1 class='masthead-title text-center m-0'>LOTES COMERCIALES</h1>")
+            ui.html("<p class='micro-coord mt-2'>AGRUPACIÓN ESTRATÉGICA DE SALIDA POR MERCADO</p>")
+
+        if can_manage_lots():
+            with ui.expansion("CREAR NUEVO LOTE COMERCIAL", value=not bool(lots)).classes("w-full border border-[#141413] mb-6 p-2"):
+                with ui.row().classes("w-full grid grid-cols-1 md:grid-cols-12 gap-4 items-end p-2"):
+                    lot_name_in = ui.input(label="Nombre del lote", placeholder="Ej. Oro vintage, primavera").classes("md:col-span-7 w-full")
+                    strategy_sel = ui.select(STRATEGIES, value=STRATEGIES[0], label="Estrategia de salida").classes("md:col-span-5 w-full")
+
+                    def create_new_lot():
+                        if not (lot_name_in.value or "").strip():
+                            ui.notify("Escribe un nombre para el lote.", type="warning")
+                        else:
+                            create_lot(lot_name_in.value.strip(), strategy_sel.value, [])
+                            refresh_ui()
+
+                    editorial_button("CREAR LOTE", on_click=create_new_lot, extra_classes="mt-2")
+
+        def render_piece_grid_ui(piece_list: list, lot_id: str, action: str):
+            with ui.row().classes("w-full grid grid-cols-1 md:grid-cols-3 gap-6 my-3"):
+                for idx, piece in enumerate(piece_list):
+                    row = piece_contribution(piece.get("metadata") or {}, piece.get("dictamen") or "")
+                    case_id = piece.get("case_id")
+                    thumbnail = _piece_thumbnail(piece)
+                    web_src = _media_src(thumbnail or "")
+                    val_info = _extract_true_market_valuation(piece.get("dictamen") or "", piece.get("metadata") or {})
+                    amount = val_info["display"]
+                    maker = piece.get("maker") or str(case_id)
+                    real_name = piece.get("label") or case_id
+
+                    with ui.element("div").classes("catalog-card w-full"):
+                        with ui.column().classes("w-full gap-0"):
+                            if web_src:
+                                ui.html(f"<div class='catalog-img-frame'><img src='{html.escape(web_src)}'/></div>")
+                            else:
+                                ui.html("<div class='catalog-img-frame flex items-center justify-center'><span class='micro-coord'>SIN MINIATURA</span></div>")
+                            ui.html(f"<div class='catalog-roman'>{to_roman(idx)}</div>")
+                            ui.html(f"<div class='catalog-brand'>{html.escape(maker)}</div>")
+                            ui.html(
+                                f"<div class='catalog-row'>"
+                                f"<span class='catalog-title-text'>{html.escape(real_name)}</span>"
+                                f"<span class='catalog-price-text'>{html.escape(amount)}</span>"
+                                f"</div>"
+                            )
+                            ui.html(f"<p class='catalog-excerpt'>{html.escape(_piece_metrics(row))}</p>")
+                        with ui.row().classes("w-full justify-between items-center pt-2"):
+                            editorial_button("FICHA", on_click=lambda _, cid=case_id: navigate("detail", cid))
+                            if action == "remove" and can_manage_lots():
+                                def drop_member(lid=lot_id, cid=case_id):
+                                    current = next((l for l in load_lots() if l.get("lot_id") == lid), None)
+                                    kept = [item for item in (current or {}).get("case_ids") or [] if item != cid]
+                                    update_lot_members(lid, kept)
+                                    refresh_ui()
+                                editorial_button("QUITAR", on_click=drop_member)
+                            elif action == "add" and can_manage_lots():
+                                def add_member(lid=lot_id, cid=case_id):
+                                    current = next((l for l in load_lots() if l.get("lot_id") == lid), None)
+                                    update_lot_members(lid, list((current or {}).get("case_ids") or []) + [cid])
+                                    refresh_ui()
+                                editorial_button("INCLUIR", on_click=add_member)
+
+        for lot in lots:
+            lid = lot.get("lot_id")
+            report = summarize_lot(lot, pieces)
+            ui.html(_lot_brief_html(report))
+            if can_manage_lots():
+                with ui.row().classes("w-full justify-end mb-2"):
+                    def del_lot(l_id=lid):
+                        delete_lot(l_id)
+                        refresh_ui()
+                    editorial_button("ELIMINAR LOTE", on_click=del_lot)
+
+            members = [by_id[cid] for cid in lot.get("case_ids") or [] if cid in by_id]
+            if members:
+                render_piece_grid_ui(members, lid, "remove")
+
+            member_ids = {p["case_id"] for p in members}
+            available = [p for p in pieces if p["case_id"] not in member_ids]
+            if available:
+                ui.html("<p class='micro-coord mt-4'>AÑADIR EXPEDIENTE AL LOTE</p>")
+                render_piece_grid_ui(available, lid, "add")
+            ui.html("<hr class='w-full border-t border-[#141413] my-6'>")
+
+    # ------------------------------------------
+    # VISTA 5: DETAIL VIEW CON PLANO TÉCNICO CAD DINÁMICO Y REACTIVO
+    # ------------------------------------------
+    def build_detail_view():
+        target_id = state.get("selected_case_id")
+        case_metadata = get_case_view_model(target_id) if target_id else {}
+        if not case_metadata:
+            all_cases = cloud_case_items()
+            case_item = next((c for c in all_cases if c.get("case_id") == target_id), None)
+            if not case_item and all_cases:
+                case_item = all_cases[-1]
+            if not case_item:
+                ui.label("No se ha seleccionado ningún expediente válido.")
+                editorial_button("VOLVER AL PANEL", on_click=lambda: navigate("main"))
+                return
+            case_metadata = cloud_case_metadata(case_item.get("case_id")) or case_item
+
+        case_id = case_metadata.get("case_id")
+        ficha = relationalize_metadata(case_metadata)
+        folder_path = ""
+
+        evidence_paths = list(case_metadata.get("evidence_urls") or [])
+        if not evidence_paths and case_metadata.get("image_path"):
+            evidence_paths = [case_metadata["image_path"]]
+        dictamen_text = case_metadata.get("dictamen_text") or "No se ha encontrado el contenido del dictamen."
+
+        maker, real_title = _extract_product_identity_from_dictamen(dictamen_text, case_metadata)
+        val_info = _extract_true_market_valuation(dictamen_text, case_metadata)
+        price_banner = val_info["display"]
+
+        seeded_gem = _auto_seed_gemology_from_dictamen(dictamen_text, ficha.get("gemology_data"))
+
+        render_top_bar(f"REF // {case_id}")
+
+        archive_label, archive_variant = _case_archive_state(case_id)
+        needs_archive = _case_needs_archive(case_id)
+
+        with ui.row().classes("w-full justify-between items-end pb-5 border-b border-[#141413] gap-6"):
+            with ui.column().classes("gap-1"):
+                ui.html(f"<span class='micro-coord'>{html.escape(maker)} · EXPEDIENTE {html.escape(str(case_id))}</span>")
+                ui.html(f"<h1 class='text-4xl md:text-5xl m-0 uppercase tracking-tight'>{html.escape(real_title)}</h1>")
+                ui.html(
+                    f"<span class='editorial-status-badge editorial-status-badge--{html.escape(archive_variant)}'>"
+                    f"{html.escape(archive_label)}</span>"
+                )
+
+            with ui.row().classes("items-end gap-8 flex-wrap"):
+                if needs_archive and can_save_expedient():
+
+                    async def save_expediente_to_archive():
+                        payload = dict(get_case_view_model(case_id) or case_metadata)
+                        latest = state.get("last_dictamen")
+                        if latest and state.get("selected_case_id") == case_id:
+                            payload["dictamen_text"] = latest
+                        payload["status"] = "active"
+                        payload.setdefault("object_description", payload.get("object_description") or real_title)
+                        await run.io_bound(
+                            _finalize_cloud_case,
+                            case_id,
+                            payload,
+                            payload.get("dictamen_text") or dictamen_text,
+                        )
+                        ui.notify("Expediente guardado en la galería", type="positive")
+                        refresh_ui()
+
+                    editorial_button(
+                        "GUARDAR EXPEDIENTE EN ARCHIVO",
+                        on_click=save_expediente_to_archive,
+                        extra_classes="editorial-btn-primary",
                     )
-                    st.session_state.last_dictamen = dictamen_text
-                    st.session_state.active_case_id = case_id
-                    st.session_state.current_view = "result"
-                    st.rerun()
+                if val_info["wholesale"] != "—":
+                    with ui.column().classes("items-end gap-0"):
+                        ui.html("<span class='micro-coord'>LIQUIDACIÓN RÁPIDA</span>")
+                        ui.html(f"<span class='editorial-serif text-xl'>{html.escape(val_info['wholesale'])}</span>")
+                if val_info["auction"] != "—":
+                    with ui.column().classes("items-end gap-0"):
+                        ui.html("<span class='micro-coord'>SUBASTA ESPECIALIZADA</span>")
+                        ui.html(f"<span class='editorial-serif text-xl'>{html.escape(val_info['auction'])}</span>")
+                with ui.column().classes("items-end gap-0"):
+                    ui.html("<span class='micro-coord'>VALOR MINORISTA ESTIMADO</span>")
+                    ui.html(f"<span class='editorial-serif text-3xl'>{html.escape(price_banner)}</span>")
 
-# ==========================================
-# VISTA 2: RESULT SCREEN (ESTADO PERSISTENTE INTELIGENTE SUBFASE 3.3)
-# ==========================================
-elif st.session_state.current_view == "result":
-    
-    st.markdown("<h2 style='text-align: center; margin-top: 1rem;'>Dictamen Pericial, Tasación y Buyer Search Generados</h2>", unsafe_allow_html=True)
-    st.markdown("<hr style='border: none; border-top: 1px solid #e3dec3; margin-bottom: 2rem;'>", unsafe_allow_html=True)
+                async def export_dossier_pdf():
+                    ui.notify("Maquetando dossier editorial...", type="info")
+                    try:
+                        allow_net = case_id not in _DRAFT_CASES
+                        local_evidence = []
+                        pdf_cache = os.path.join("data", "temp", "pdf", case_id)
+                        for index, src in enumerate(evidence_paths):
+                            if os.path.exists(src):
+                                local_evidence.append(src)
+                            elif allow_net:
+                                path = _materialize_image(
+                                    src,
+                                    pdf_cache,
+                                    index,
+                                    case_id=case_id,
+                                )
+                                if path:
+                                    local_evidence.append(path)
+                                elif _is_remote_src(src):
+                                    local_evidence.append(src)
 
-    raw_dictamen = st.session_state.get("last_dictamen", "")
-    alerts_section, commercial_section = parse_dictamen_sections(raw_dictamen)
-
-    active_case = st.session_state.get("active_case_id")
-    case_folder = os.path.join("data", "cases", active_case) if active_case else ""
-    meta_path = os.path.join(case_folder, "metadata.json") if case_folder else ""
-    
-    case_metadata = {}
-    if meta_path and os.path.exists(meta_path):
-        with open(meta_path, "r", encoding="utf-8") as mf:
-            case_metadata = json.load(mf)
-    
-    resolved_questions_store = case_metadata.get("resolved_questions", [])
-
-    if alerts_section:
-        visible_alert_lines = []
-        for alert_line in alerts_section.split("\n"):
-            stripped_line = alert_line.strip()
-            if stripped_line and (
-                _question_is_resolved(stripped_line, resolved_questions_store)
-                or _question_is_resolved(re.sub(r"^(\d+[\.\)\:]|[-*•])\s+", "", stripped_line), resolved_questions_store)
-            ):
-                continue
-            visible_alert_lines.append(alert_line)
-        visible_alerts = "\n".join(visible_alert_lines).strip() or "Sin incertidumbres pendientes de resolución."
-        st.markdown(f"""
-            <div class='audit-box'>
-                <h4 style='color: #8c6d28; margin-top: 0; font-size: 1.1rem;'>🛡️ Panel de Auditoría e Incertidumbres del Agente</h4>
-                <div style='color: #333; font-size: 0.95rem;'>{visible_alerts}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        extracted_questions = extract_questions_from_alerts(
-            alerts_section, resolved_questions=resolved_questions_store
-        )
-        pending_questions = extracted_questions
-
-        if pending_questions:
-            with st.expander(f"💬 Interrogatorio Activo: {len(pending_questions)} Incertidumbre(s) Pendiente(s) de Resolución", expanded=True):
-                st.markdown("<p style='font-size: 0.95rem; color: #b89753; font-weight: 500;'>Responde solo a las cuestiones que deseas aclarar ahora. Las que dejes vacías o sin responder se mantendrán en suspenso para el futuro:</p>", unsafe_allow_html=True)
-                
-                user_answers = {}
-                user_urls = {}
-                user_files_dict = {}
-
-                for q_idx, q_text in enumerate(pending_questions):
-                    st.markdown(f"<div class='question-card'>", unsafe_allow_html=True)
-                    st.markdown(f"**Cuestión Pendiente {q_idx+1}:** {q_text}")
-                    
-                    qc1, qc2 = st.columns([1.2, 1], gap="medium")
-                    with qc1:
-                        ans = st.text_input(f"Respuesta / Aclaración", placeholder="Escribe tu apreciación o 'Pendiente'...", key=f"q_ans_{active_case}_{q_idx}")
-                        url_val = st.text_input(f"URL de referencia opcional", placeholder="https://...", key=f"q_url_{active_case}_{q_idx}")
-                        user_answers[q_idx] = ans
-                        user_urls[q_idx] = url_val
-                    with qc2:
-                        f_uploaded = st.file_uploader(f"Foto/Evidencia complementaria", type=["jpg", "jpeg", "png"], key=f"q_file_{active_case}_{q_idx}")
-                        user_files_dict[q_idx] = f_uploaded
-                    st.markdown(f"</div>", unsafe_allow_html=True)
-
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("⚡ Procesar Respuestas, Consolidar y Recalcular", use_container_width=True):
-                    with st.spinner("Asimilando respuestas, archivando cuestiones resueltas y recalculando expediente..."):
-                        evidence_folder = os.path.join(case_folder, "evidence")
-                        os.makedirs(evidence_folder, exist_ok=True)
-                        
-                        answer_summaries = []
-                        newly_resolved = []
-
-                        for q_idx, q_text in enumerate(pending_questions):
-                            ans = user_answers.get(q_idx, "").strip()
-                            url_v = user_urls.get(q_idx, "").strip()
-                            f_up = user_files_dict.get(q_idx)
-                            
-                            if ans or f_up is not None or url_v:
-                                answer_text = ans if ans else "Evidencia/URL aportada"
-                                answer_summaries.append(f"Aclaración: {answer_text}")
-                                newly_resolved.append(q_text)
-                            
-                            if f_up is not None:
-                                ext = os.path.splitext(f_up.name)[1]
-                                new_filename = f"evidence_q{q_idx+1}_{os.urandom(2).hex()}{ext}"
-                                new_file_path = os.path.join(evidence_folder, new_filename)
-                                with open(new_file_path, "wb") as f:
-                                    f.write(f_up.getbuffer())
-
-                        updated_resolved_store = list(dict.fromkeys(resolved_questions_store + newly_resolved))
-                        final_clean_notes = build_flat_context_notes(
-                            case_metadata.get("context_notes", ""),
-                            answer_summaries,
+                        case_payload = dict(case_metadata)
+                        case_payload.update(
+                            {
+                                "case_id": case_id,
+                                "title": real_title,
+                                "maker": maker,
+                                "dictamen_text": dictamen_text,
+                                "object_description": case_metadata.get("object_description") or real_title,
+                                "timestamp": float(case_metadata.get("timestamp") or 0),
+                                "gemology_data": seeded_gem,
+                                "cad_blueprint": case_metadata.get("cad_blueprint")
+                                or _infer_cad_defaults_from_dictamen(
+                                    dictamen_text,
+                                    case_metadata.get("cad_blueprint") or {},
+                                ),
+                                "valuation": val_info,
+                                "logistics_intelligence": ficha.get("logistics_intelligence") or {},
+                            }
                         )
 
-                        if meta_path and os.path.exists(meta_path):
-                            with open(meta_path, "r", encoding="utf-8") as mf:
-                                mdata = json.load(mf)
-                            mdata["resolved_questions"] = updated_resolved_store
-                            mdata["context_notes"] = final_clean_notes
-                            with open(meta_path, "w", encoding="utf-8") as mf:
-                                json.dump(mdata, mf, indent=2, ensure_ascii=False)
-
-                        all_ev_images = [os.path.join(evidence_folder, f) for f in sorted(os.listdir(evidence_folder)) if f.lower().endswith(('png', 'jpg', 'jpeg'))]
-                        orig_desc = case_metadata.get("object_description", "Pieza peritada")
-
-                        updated_dictamen = agent.analyze_evidence(
-                            object_description=orig_desc,
-                            context_notes=final_clean_notes,
-                            image_paths=all_ev_images,
-                            case_id=active_case
+                        pdf_bytes = await run.io_bound(
+                            generate_dossier_pdf,
+                            case_payload,
+                            local_evidence,
+                            None,
                         )
-                        st.session_state.last_dictamen = updated_dictamen
-                        st.success("¡Cuestiones consolidadas, expediente actualizado y preguntas resueltas archivadas con éxito!")
-                        st.rerun()
-        else:
-            st.markdown("<p style='color: #2e7d32; font-weight: 500; font-size: 0.95rem; background-color: #e8f5e9; padding: 12px; border-radius: 2px;'>✨ Todas las incertidumbres detectadas en este expediente han sido respondidas y consolidadas satisfactoriamente.</p>", unsafe_allow_html=True)
+                        ui.download(pdf_bytes, f"Dossier_{case_id}.pdf")
+                    except Exception as e:
+                        ui.notify(f"Error generando PDF: {e}", type="negative")
 
-    col_split_left, col_split_right = st.columns([1, 1.2], gap="large")
+                editorial_button("EXPORTAR DOSSIER PDF", on_click=export_dossier_pdf)
 
-    with col_split_left:
-        st.markdown("### Evidencias Aportadas")
-        case_ev_folder = os.path.join(case_folder, "evidence") if case_folder else ""
-        if case_ev_folder and os.path.exists(case_ev_folder):
-            ev_files = sorted(os.listdir(case_ev_folder))
-            for f in ev_files:
-                f_path = os.path.join(case_ev_folder, f)
-                st.image(f_path, caption=f"Registro Fotográfico — {f}", use_container_width=True)
-        else:
-            st.info("Imágenes temporales procesadas.")
+        if can_save_expedient():
+            with ui.expansion("CORREGIR NOMBRE O MARCA DEL EXPEDIENTE").classes("w-full border-b border-[#141413] py-1"):
+                with ui.row().classes("w-full grid grid-cols-1 md:grid-cols-12 gap-4 items-end py-2"):
+                    brand_in = ui.input(label="Marca / Casa Matriz", value=maker).classes("md:col-span-4 w-full")
+                    title_in = ui.input(label="Nombre real del objeto", value=real_title).classes("md:col-span-5 w-full")
 
-    with col_split_right:
-        st.markdown("### Informe Técnico, Económico y Comercial")
-        st.markdown("<div class='editorial-container'>", unsafe_allow_html=True)
-        st.markdown(commercial_section)
-        st.markdown("</div>", unsafe_allow_html=True)
+                    def save_Manual_name():
+                        save_custom_identity(case_id, brand_in.value or "", title_in.value or "")
+                        ui.notify("Identidad del expediente actualizada", type="positive")
+                        refresh_ui()
 
-    st.markdown("<br><hr style='border: none; border-top: 1px solid #e3dec3; margin: 2rem 0;'>", unsafe_allow_html=True)
+                    with ui.row().classes("md:col-span-3 w-full justify-end"):
+                        editorial_button("GUARDAR NOMBRE", on_click=save_Manual_name)
 
-    b_col1, b_col2, b_col3 = st.columns([1, 1, 1])
-    with b_col1:
-        if st.button("Volver al Panel Principal", use_container_width=True):
-            st.session_state.current_view = "main"
-            st.session_state.uploader_key += 1
-            st.rerun()
-    with b_col2:
-        if st.button("Guardar en Archivo General", use_container_width=True):
-            st.success("Expediente consolidado y guardado correctamente en la Castle Library.")
-    with b_col3:
-        if st.button("Descartar Expediente", use_container_width=True):
-            library.delete_case(active_case)
-            st.session_state.current_view = "main"
-            st.session_state.uploader_key += 1
-            st.rerun()
+        if evidence_paths:
+            with ui.column().classes("w-full py-5 border-b border-[#141413] gap-2"):
+                with ui.row().classes("w-full justify-between items-center"):
+                    ui.html("<span class='micro-coord'>REGISTRO FOTOGRÁFICO DE EVIDENCIAS (CLIC PARA AMPLIAR)</span>")
+                    ui.html(f"<span class='micro-coord'>{len(evidence_paths)} TOMAS REGISTRADAS</span>")
+                with ui.row().classes("w-full flex-wrap gap-5 mt-1"):
+                    for idx, full_p in enumerate(evidence_paths):
+                        w_src = _media_src(full_p)
+                        fname = os.path.basename(str(full_p).split("?")[0])
+                        with ui.column().classes("thumb-strip-item gap-1").on("click", lambda _, p=full_p, c=fname: open_zoom(p, c)):
+                            ui.html(f"<span class='micro-coord'>IMAGE 0{idx+1}</span>")
+                            ui.html(f"<div class='thumb-frame'><img src='{html.escape(w_src)}' alt='IMAGE 0{idx+1}'/></div>")
 
-# ==========================================
-# VISTA 3: LIBRARY (GRID DE 3 COLUMNAS)
-# ==========================================
-elif st.session_state.current_view == "library":
-    
-    st.markdown("<h2 style='text-align: center; margin-top: 1rem;'>Archivo General de Casos — Castle Library</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #666;'>Galería documental de piezas autenticadas, tasadas y estrategias de mercado</p>", unsafe_allow_html=True)
-    st.markdown("<hr style='border: none; border-top: 1px solid #e3dec3; margin-bottom: 2.5rem;'>", unsafe_allow_html=True)
+        det_alerts, _ = parse_dictamen_sections(dictamen_text)
+        pending_q = unanswered_questions(det_alerts, ficha)
+        categorized = _deduplicate_and_Categorize_dictamen(dictamen_text)
+        findings = executive_findings(dictamen_text)
 
-    cases = library.get_all_cases()
+        active_tab = state.get("detail_tab", "sintesis")
 
-    if not cases:
-        st.markdown("<p style='text-align: center; color: #888;'>No existen casos registrados en el sistema.</p>", unsafe_allow_html=True)
-    else:
-        grid_cols = 3
-        rows = [cases[i:i + grid_cols] for i in range(0, len(cases), grid_cols)]
+        def set_tab(t_name: str):
+            state["detail_tab"] = t_name
+            refresh_ui()
 
-        for row in rows:
-            cols = st.columns(grid_cols)
-            for idx, item in enumerate(row):
-                with cols[idx]:
-                    st.markdown("<div class='editorial-card'>", unsafe_allow_html=True)
-                    
-                    clean_name = item.get("context_notes") if (item.get("context_notes") and item.get("context_notes") != "Sin notas adicionales") else item.get("object_description", "Objeto peritado")
-                    if "analizada por visión" in clean_name:
-                        clean_name = "Pieza de Alta Gama"
-                    
-                    st.markdown(f"**{clean_name}**")
-                    st.markdown(f"<p style='font-size: 0.75rem; color: #888; margin-bottom: 8px;'>Ref: {item.get('case_id')}</p>", unsafe_allow_html=True)
-                    
-                    img_path = item.get("image_path")
-                    if img_path and os.path.exists(img_path):
-                        st.image(img_path, use_container_width=True)
-                    else:
-                        st.markdown("<p style='color: #888; font-size: 0.8rem;'>Sin imagen disponible</p>", unsafe_allow_html=True)
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    lnk_col1, lnk_col2 = st.columns(2)
-                    with lnk_col1:
-                        if st.button("Ver Ficha", key=f"lib_view_{item.get('case_id')}_{idx}", use_container_width=True):
-                            st.session_state.selected_case_id = item.get("case_id")
-                            st.session_state.current_view = "detail"
-                            st.rerun()
-                    with lnk_col2:
-                        if st.button("Eliminar", key=f"lib_del_{item.get('case_id')}_{idx}", use_container_width=True):
-                            library.delete_case(item.get("case_id"))
-                            st.rerun()
-                            
-                    st.markdown("</div>", unsafe_allow_html=True)
+        with ui.row().classes("w-full border-b border-[#141413] gap-2 pt-2"):
+            tabs_def = [
+                ("sintesis", "I · SÍNTESIS & PLANO TÉCNICO CAD"),
+                ("mercado", "II · TASACIÓN & BUYER SEARCH"),
+                ("herramientas", "III · GEMOLOGÍA ACTIVA & LOGÍSTICA"),
+                ("forense", "IV · DOSSIER TÉCNICO COMPLETO"),
+            ]
+            for t_key, t_label in tabs_def:
+                cls = "editorial-tab editorial-tab-active" if active_tab == t_key else "editorial-tab"
+                btn = ui.element("button").classes(cls)
+                with btn:
+                    ui.html(f"<span>{html.escape(t_label)}</span>")
+                btn.on("click", lambda _, k=t_key: set_tab(k))
 
-    st.markdown("<br><hr style='border: none; border-top: 1px solid #e3dec3; margin: 2rem 0;'>", unsafe_allow_html=True)
-    
-    col_ret1, col_ret2, col_ret3 = st.columns([1, 1, 1])
-    with col_ret2:
-        if st.button("Volver al Panel Principal", use_container_width=True):
-            st.session_state.current_view = "main"
-            st.rerun()
+        with ui.column().classes("w-full py-8 gap-6"):
+            if active_tab == "sintesis":
+                with ui.row().classes("w-full grid grid-cols-1 lg:grid-cols-12 gap-10 items-start"):
+                    with ui.column().classes("lg:col-span-5 w-full gap-5"):
+                        ui.html("<span class='micro-coord'>01 // FICHA TÉCNICA RESUMIDA</span>")
+                        gem_status_str = (
+                            f"Activa ({seeded_gem['gem']['species']})"
+                            if seeded_gem.get("applies") else "No aplica"
+                        )
+                        rows_list = [
+                            ("Marca / Casa", maker),
+                            ("Objeto", real_title),
+                            ("Gemología", gem_status_str),
+                            ("Liquidación", val_info["wholesale"]),
+                            ("Subasta", val_info["auction"]),
+                            ("Mercado Minorista", val_info["retail"]),
+                        ] + findings
+                        rows_html = "".join(
+                            f"<div class='spec-row'><span class='spec-label'>{html.escape(lbl)}</span><span class='spec-value'>{html.escape(val)}</span></div>"
+                            for lbl, val in rows_list
+                        )
+                        ui.html(f"<div class='spec-table'>{rows_html}</div>")
 
-# ==========================================
-# VISTA 4: DETAIL VIEW
-# ==========================================
-elif st.session_state.current_view == "detail":
-    
-    target_id = st.session_state.get("selected_case_id")
-    all_cases = library.get_all_cases()
-    case_item = next((c for c in all_cases if c.get("case_id") == target_id), None)
-    
-    if not case_item and all_cases:
-        case_item = all_cases[-1]
+                        # ==========================================================
+                        # PLIEGO TÉCNICO CAD INTERACTIVO (CAMBIA EL DIBUJO EN VIVO SEGÚN ANILLO Y ENGASTE)
+                        # ==========================================================
+                        saved_cad = _infer_cad_defaults_from_dictamen(dictamen_text, case_metadata.get("cad_blueprint") or {})
+                        with ui.column().classes("human-evidence-box w-full gap-3"):
+                            ui.html("<span class='micro-coord text-[#141413]'>02 // PLANO TÉCNICO INTERACTIVO (EL GRÁFICO CAMBIA SEGÚN ESTILO Y ENGASTE)</span>")
 
-    if not case_item:
-        st.warning("No se ha seleccionado ningún expediente válido.")
-        if st.button("Volver al Panel Principal"):
-            st.session_state.current_view = "main"
-            st.rerun()
-    else:
-        clean_title = case_item.get("context_notes") if (case_item.get("context_notes") and case_item.get("context_notes") != "Sin notas adicionales") else case_item.get("object_description", "Ficha Técnica")
-        if "analizada por visión" in clean_title:
-            clean_title = "Ficha Técnica, Tasación y Buyer Search"
-        
-        st.markdown(f"<h2 style='text-align: center; margin-top: 1rem;'>{clean_title}</h2>", unsafe_allow_html=True)
-        st.markdown(f"<p style='text-align: center; color: #666;'>Expediente de Referencia: {case_item.get('case_id')}</p>", unsafe_allow_html=True)
-        st.markdown("<hr style='border: none; border-top: 1px solid #e3dec3; margin-bottom: 2rem;'>", unsafe_allow_html=True)
+                            cad_type = ui.select(
+                                JEWELRY_TYPES,
+                                value=saved_cad.get("jewelry_type", "Anillo / Sortija"),
+                                label="1. Tipología de pieza"
+                            ).classes("w-full")
 
-        det_col1, det_col2 = st.columns([1, 1.3], gap="large")
-        folder_path = case_item.get("folder_path")
+                            with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-3"):
+                                cad_shank = ui.select(
+                                    RING_SHANK_PROFILES,
+                                    value=saved_cad.get("shank_profile", RING_SHANK_PROFILES[0]),
+                                    label="2. Estilo de Anillo / Banda"
+                                ).classes("w-full")
+                                cad_setting = ui.select(
+                                    SETTING_ARCHITECTURES,
+                                    value=saved_cad.get("setting_arch", SETTING_ARCHITECTURES[0]),
+                                    label="3. Tipo de Engaste (ver dibujo III)"
+                                ).classes("w-full")
 
-        with det_col1:
-            st.markdown("### Evidencias Fotográficas")
-            if folder_path and os.path.exists(folder_path):
-                ev_folder = os.path.join(folder_path, "evidence")
-                if os.path.exists(ev_folder):
-                    for img_file in sorted(os.listdir(ev_folder)):
-                        full_p = os.path.join(folder_path, "evidence", img_file)
-                        st.image(full_p, caption=f"Evidencia Documental — {img_file}", use_container_width=True)
-            else:
-                img_p = case_item.get("image_path")
-                if img_p and os.path.exists(img_p):
-                    st.image(img_p, use_container_width=True)
+                            # Contenedor del Plano SVG dinámico + guía en lenguaje llano
+                            blueprint_slot = ui.column().classes("w-full gap-1")
 
-        with det_col2:
-            st.markdown("### Dictamen, Tasación y Estrategia Comercial")
-            
-            if st.button("Actualizar Tasación y Generar Buyer Search", key=f"btn_appraise_detail_{case_item.get('case_id')}", use_container_width=True):
-                with st.spinner("Consultando tendencias de mercado y generando perfilado de compradores..."):
-                    updated_dictamen = agent.update_appraisal(
-                        case_folder=folder_path,
-                        object_desc=case_item.get('object_description', ''),
-                        notes=case_item.get('context_notes', '')
-                    )
-                    st.success("¡Tasación y estrategia de mercado actualizadas con éxito!")
-                    st.rerun()
+                            ui.html("<span class='micro-coord mt-1'>COTAS DE MONTURA Y METAL (SEGÚN EL PLANO SUPERIOR)</span>")
+                            with ui.row().classes("w-full grid grid-cols-2 sm:grid-cols-3 gap-2"):
+                                cad_weight = ui.input(label="Peso total (g)", value=str(saved_cad.get("weight_g", "")), placeholder="Ej. 5.4").classes("w-full")
+                                cad_a = ui.input(label="Cota A: Ø Int (mm)", value=str(saved_cad.get("cota_a_mm", "")), placeholder="Ej. 17.2").classes("w-full")
+                                cad_b = ui.input(label="Cota B: Ancho Banda", value=str(saved_cad.get("cota_b_mm", "")), placeholder="Ej. 3.8").classes("w-full")
+                                cad_c = ui.input(label="Cota C: Espesor Aro", value=str(saved_cad.get("cota_c_mm", "")), placeholder="Ej. 1.6").classes("w-full")
+                                cad_d = ui.input(label="Cota D: Alt. Cabeza", value=str(saved_cad.get("cota_d_mm", "")), placeholder="Ej. 6.5").classes("w-full")
 
-            dictamen_text = "No se ha encontrado el contenido del dictamen."
-            if folder_path:
-                md_file = os.path.join(folder_path, "dictamen.md")
-                if os.path.exists(md_file):
-                    with open(md_file, "r", encoding="utf-8") as f:
-                        dictamen_text = f.read()
-            
-            det_alerts, det_commercial = parse_dictamen_sections(dictamen_text)
+                            # Cota E: Piedra Principal / Serie 1
+                            ui.html("<span class='micro-coord mt-2'>COTA E // PIEDRA PRINCIPAL O SERIE 1 (EJ. ESMERALDAS)</span>")
+                            with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+                                c_species = ui.select(list(SPECIES_DENSITY_MULTIPLIER.keys()), value=saved_cad.get("central_species", "Esmeralda"), label="Especie").classes("w-full")
+                                c_cut = ui.select(GEM_CUT_CATALOG, value=saved_cad.get("central_cut", "Esmeralda / Octogonal"), label="Corte / Talla").classes("w-full")
+                                c_count = ui.number(label="Cantidad", value=int(saved_cad.get("central_count", 1)), min=0, step=1).classes("w-full")
+                            with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+                                c_l = ui.number(label="Largo (mm)", value=float(saved_cad.get("central_l_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+                                c_w = ui.number(label="Ancho (mm)", value=float(saved_cad.get("central_w_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+                                c_d = ui.number(label="Prof. (mm)", value=float(saved_cad.get("central_d_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
 
-            if det_alerts:
-                st.markdown(f"""
-                    <div class='audit-box'>
-                        <h4 style='color: #8c6d28; margin-top: 0; font-size: 1.1rem;'>🛡️ Panel de Auditoría e Incertidumbres (Modo Trabajo Activo)</h4>
-                        <div style='color: #333; font-size: 0.95rem;'>{det_alerts}</div>
-                    </div>
-                """, unsafe_allow_html=True)
+                            # Cota F: Piedras Secundarias / Hombros / Serie 2
+                            ui.html("<span class='micro-coord mt-2'>COTA F // PIEDRAS SECUNDARIAS / HOMBROS / SERIE 2 (EJ. DIAMANTES)</span>")
+                            with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+                                s_species = ui.select(list(SPECIES_DENSITY_MULTIPLIER.keys()), value=saved_cad.get("side_species", "Diamante"), label="Especie").classes("w-full")
+                                s_cut = ui.select(GEM_CUT_CATALOG, value=saved_cad.get("side_cut", "Brillante Redondo"), label="Corte / Talla").classes("w-full")
+                                s_count = ui.number(label="Cantidad real", value=int(saved_cad.get("side_count", 0)), min=0, step=1).classes("w-full")
+                            with ui.row().classes("w-full grid grid-cols-2 gap-2"):
+                                s_l = ui.number(label="Largo / Ø (mm)", value=float(saved_cad.get("side_l_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+                                s_w = ui.number(label="Ancho (mm)", value=float(saved_cad.get("side_w_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
 
-            st.markdown("<div class='editorial-container'>", unsafe_allow_html=True)
-            st.markdown(det_commercial)
-            st.markdown("</div>", unsafe_allow_html=True)
+                            carat_preview = ui.label("").classes("micro-coord text-[#141413] mt-1")
 
-        st.markdown("<br><hr style='border: none; border-top: 1px solid #e3dec3; margin: 2rem 0;'>", unsafe_allow_html=True)
+                            def refresh_cad_visuals():
+                                blueprint_slot.clear()
+                                total_ring_stones = int(c_count.value or 0) + int(s_count.value or 0)
+                                with blueprint_slot:
+                                    ui.html(
+                                        _dynamic_blueprint_svg_html(
+                                            cad_type.value,
+                                            cad_shank.value,
+                                            cad_setting.value,
+                                            c_cut.value,
+                                            s_cut.value,
+                                            total_ring_stones if "alianza" in (cad_shank.value or "").lower() else int(s_count.value or 0),
+                                        )
+                                    )
+                                    guide_txt = _plain_language_measurement_guide(cad_shank.value, cad_setting.value)
+                                    ui.html(f"<p class='text-[11px] text-[#625E57] leading-snug m-0 px-1'>💡 <strong>Guía visual:</strong> {html.escape(guide_txt)}</p>")
 
-        back_c1, back_c2, back_c3 = st.columns([1, 1, 1])
-        with back_c1:
-            if st.button("Volver al Archivo General", use_container_width=True):
-                st.session_state.current_view = "library"
-                st.rerun()
-        with back_c3:
-            if st.button("Volver al Panel Principal", use_container_width=True):
-                st.session_state.current_view = "main"
-                st.rerun()
+                                ct_c = estimate_carats_from_mm(c_species.value, c_cut.value, int(c_count.value or 0), float(c_l.value or 0), float(c_w.value or 0), float(c_d.value or 0))
+                                ct_s = estimate_carats_from_mm(s_species.value, s_cut.value, int(s_count.value or 0), float(s_l.value or 0), float(s_w.value or 0), 0.0)
+                                tot = round(ct_c + ct_s, 3)
+                                carat_preview.text = f"QUILATAJE GEOMÉTRICO CALCULADO: SERIE 1 ({ct_c} CT) + SERIE 2 ({ct_s} CT) = TOTAL {tot} CT"
+
+                            for ctrl in (cad_type, cad_shank, cad_setting, c_species, c_cut, c_count, c_l, c_w, c_d, s_species, s_cut, s_count, s_l, s_w):
+                                ctrl.on_value_change(lambda _: refresh_cad_visuals())
+                            refresh_cad_visuals()
+
+                            cad_hyp = ui.select(
+                                [
+                                    "Evaluar Ambas Hipótesis (Gema Natural vs. Sintética)",
+                                    "Confirmado en joyería: Gemas Naturales",
+                                    "Confirmado en joyería: Sintéticas / Simulantes",
+                                    "Pendiente de checkeo en joyería",
+                                ],
+                                value=saved_cad.get("gem_hypothesis", "Evaluar Ambas Hipótesis (Gema Natural vs. Sintética)"),
+                                label="Hipótesis / Resultado de Checkeo"
+                            ).classes("w-full")
+
+                            cad_obs = ui.input(
+                                label="Notas adicionales de taller / cuños",
+                                value=saved_cad.get("extra_observations", ""),
+                                placeholder="Ej. 7 esmeraldas y 5 diamantes verificados en mano..."
+                            ).classes("w-full")
+
+                            cad_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+
+                            async def apply_cad_blueprint():
+                                ct_c = estimate_carats_from_mm(c_species.value, c_cut.value, int(c_count.value or 0), float(c_l.value or 0), float(c_w.value or 0), float(c_d.value or 0))
+                                ct_s = estimate_carats_from_mm(s_species.value, s_cut.value, int(s_count.value or 0), float(s_l.value or 0), float(s_w.value or 0), 0.0)
+                                cad_payload = {
+                                    "jewelry_type": cad_type.value,
+                                    "shank_profile": cad_shank.value,
+                                    "setting_arch": cad_setting.value,
+                                    "weight_g": (cad_weight.value or "").strip(),
+                                    "cota_a_mm": (cad_a.value or "").strip(),
+                                    "cota_b_mm": (cad_b.value or "").strip(),
+                                    "cota_c_mm": (cad_c.value or "").strip(),
+                                    "cota_d_mm": (cad_d.value or "").strip(),
+                                    "central_species": c_species.value,
+                                    "central_cut": c_cut.value,
+                                    "central_count": int(c_count.value or 0),
+                                    "central_l_mm": float(c_l.value or 0),
+                                    "central_w_mm": float(c_w.value or 0),
+                                    "central_d_mm": float(c_d.value or 0),
+                                    "central_ct": ct_c,
+                                    "side_species": s_species.value,
+                                    "side_cut": s_cut.value,
+                                    "side_count": int(s_count.value or 0),
+                                    "side_l_mm": float(s_l.value or 0),
+                                    "side_w_mm": float(s_w.value or 0),
+                                    "side_ct": ct_s,
+                                    "total_ct": round(ct_c + ct_s, 3),
+                                    "gem_hypothesis": cad_hyp.value,
+                                    "extra_observations": (cad_obs.value or "").strip(),
+                                }
+                                cad_status.text = "⏳ RECALCULANDO DICTAMEN CON PLIEGO TÉCNICO CAD EN SEGUNDO PLANO..."
+                                cad_status.classes(remove="hidden")
+                                updated_md = await run.io_bound(
+                                    save_cad_blueprint_and_recalculate,
+                                    case_id,
+                                    folder_path,
+                                    case_metadata,
+                                    cad_payload,
+                                )
+                                state["last_dictamen"] = updated_md
+                                ui.notify("Tasación recalculada con las cotas CAD y el conteo real de piedras", type="positive")
+                                refresh_ui()
+
+                            if can_save_expedient():
+                                editorial_button("RECALCULAR CON COTAS CAD Y GEMAS", on_click=apply_cad_blueprint)
+
+                        if pending_q and can_save_expedient():
+                            ui.html("<span class='micro-coord mt-2'>03 // RECOMENDACIONES DE CHECKEO Y DATOS PENDIENTES</span>")
+                            ans_widgets = {}
+                            files_mem = {}
+                            for idx, question in enumerate(pending_q):
+                                human_q, rec_banner = _humanize_audit_question(question)
+                                with ui.column().classes("question-card w-full gap-2"):
+                                    if rec_banner:
+                                        ui.html(f"<p class='micro-coord text-[#8c6d28] m-0'>{html.escape(rec_banner)}</p>")
+                                    ui.markdown(f"**{to_roman(idx)}. {human_q}**")
+                                    opts = _choice_options(human_q)
+                                    if opts:
+                                        ans_widgets[idx] = ui.select(opts, value="", label="Respuesta").classes("w-full")
+                                    else:
+                                        ans_widgets[idx] = ui.input(label="Resultado observado", placeholder="Escribe el resultado...").classes("w-full")
+
+                                    def make_ficha_up(i):
+                                        async def _up(e):
+                                            fname, fbytes = await _extract_upload_bytes(e)
+                                            if fbytes:
+                                                files_mem[i] = (fname, fbytes)
+                                                ui.notify("Evidencia complementaria cargada", type="positive")
+                                        return _up
+
+                                    ui.upload(label="Foto de detalle opcional", auto_upload=True, on_upload=make_ficha_up(idx)).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+
+                            q_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+
+                            async def submit_ficha_q():
+                                q_status.text = "⏳ CONSOLIDANDO RESPUESTAS EN SEGUNDO PLANO..."
+                                q_status.classes(remove="hidden")
+                                answers_dict = {i: (w.value or "") for i, w in ans_widgets.items()}
+                                updated = await run.io_bound(
+                                    commit_ficha_answers,
+                                    case_id,
+                                    folder_path,
+                                    ficha,
+                                    pending_q,
+                                    answers_dict,
+                                    files_mem,
+                                )
+                                state["last_dictamen"] = updated
+                                ui.notify("Ficha actualizada y dictamen recalculado", type="positive")
+                                refresh_ui()
+
+                            editorial_button("ACTUALIZAR Y RECALCULAR", on_click=submit_ficha_q)
+                        elif pending_q and not can_save_expedient():
+                            ui.html(
+                                "<p class='micro-coord text-[#625E57] m-0'>"
+                                "Hay recomendaciones de checkeo pendientes; solo analistas y administradores pueden consolidar respuestas."
+                                "</p>"
+                            )
+
+                    with ui.column().classes("lg:col-span-7 w-full gap-3"):
+                        ui.html("<span class='micro-coord'>IDENTIFICACIÓN FORMAL Y VEREDICTO DE AUTENTICIDAD</span>")
+                        ui.markdown(categorized["sintesis"]).classes("editorial-reader w-full")
+
+            elif active_tab == "mercado":
+                mkt_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+                with ui.row().classes("w-full justify-between items-center pb-3 border-b border-[#141413]"):
+                    ui.html("<span class='micro-coord'>VALORACIÓN ECONOMÉTRICA, HIPÓTESIS DE PIEDRAS Y BUYER SEARCH</span>")
+
+                    async def refresh_appraisal():
+                        mkt_status.text = "⏳ ACTUALIZANDO TASACIÓN Y BUYER SEARCH EN SEGUNDO PLANO..."
+                        mkt_status.classes(remove="hidden")
+                        notes_with_rigor = (ficha.get("context_notes") or ficha.get("intake_notes") or real_title) + "\n\n" + JEWELRY_RIGOR_INSTRUCTIONS
+                        allow_net = case_id not in _DRAFT_CASES
+                        scratch, _ = _scratch_case_folder(
+                            case_id,
+                            dictamen_text,
+                            evidence_paths,
+                            allow_network=allow_net,
+                        )
+                        updated = await run.io_bound(
+                            agent.update_appraisal,
+                            scratch,
+                            real_title,
+                            notes_with_rigor,
+                        )
+                        if updated and not str(updated).startswith("Error"):
+                            if case_id in _DRAFT_CASES:
+                                draft = dict(_DRAFT_CASES[case_id])
+                                draft["dictamen_text"] = updated
+                                _DRAFT_CASES[case_id] = draft
+                            else:
+                                await run.io_bound(
+                                    _finalize_cloud_case,
+                                    case_id,
+                                    case_metadata,
+                                    updated,
+                                    evidence_paths,
+                                )
+                            state["last_dictamen"] = updated
+                            ui.notify("¡Tasación y estrategia de mercado actualizadas!", type="positive")
+                        else:
+                            ui.notify(str(updated or "No se pudo actualizar la tasación."), type="negative")
+                        refresh_ui()
+
+                    if can_save_expedient():
+                        editorial_button("RECALCULAR TASACIÓN Y BUYERS", on_click=refresh_appraisal)
+
+                ui.markdown(categorized["mercado"]).classes("editorial-reader w-full")
+
+            elif active_tab == "herramientas":
+                with ui.row().classes("w-full grid grid-cols-1 lg:grid-cols-12 gap-10 items-start"):
+                    with ui.column().classes("lg:col-span-6 w-full gap-4"):
+                        ui.html("<span class='micro-coord'>01 // GEMOLOGÍA Y METALES PRECIOSOS (AUTO-DETECTADA)</span>")
+                        gem_state = {
+                            "applies": bool(seeded_gem["applies"]),
+                            "subject": seeded_gem["subject"],
+                            "metal_kind": seeded_gem["metal"]["kind"],
+                            "metal_grams": float(seeded_gem["metal"]["grams"] or 0.0),
+                            "authorship": seeded_gem["authorship"],
+                            "setting": seeded_gem["setting"],
+                            "gem": dict(seeded_gem["gem"]),
+                            "pearl": dict(seeded_gem["pearl"]),
+                        }
+
+                        gem_container = ui.column().classes("w-full gap-3")
+
+                        def render_gem_controls():
+                            gem_container.clear()
+                            with gem_container:
+                                applies_cb = ui.checkbox("La pieza incorpora gemas o perlas", value=gem_state["applies"]).props("color=dark")
+                                applies_cb.on_value_change(lambda e: (gem_state.update({"applies": e.value}), render_gem_controls()))
+
+                                if gem_state["applies"]:
+                                    subj_radio = ui.radio(SUBJECTS, value=gem_state["subject"]).props("inline dense color=dark")
+                                    subj_radio.on_value_change(lambda e: (gem_state.update({"subject": e.value}), render_gem_controls()))
+
+                                    with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-4"):
+                                        ui.select(METALS, value=gem_state["metal_kind"], label="Metal base").on_value_change(lambda e: (gem_state.update({"metal_kind": e.value}), render_gem_controls())).classes("w-full")
+                                        ui.number(label="Gramos de metal", value=gem_state["metal_grams"], min=0.0, step=0.1).on_value_change(lambda e: (gem_state.update({"metal_grams": float(e.value or 0.0)}), render_gem_controls())).classes("w-full")
+                                        ui.select(AUTHORSHIPS, value=gem_state["authorship"], label="Autoría o taller").on_value_change(lambda e: (gem_state.update({"authorship": e.value}), render_gem_controls())).classes("w-full")
+                                        ui.select(SETTINGS, value=gem_state["setting"], label="Engaste").on_value_change(lambda e: (gem_state.update({"setting": e.value}), render_gem_controls())).classes("w-full")
+
+                                    if gem_state["subject"] in ("Gema", "Gema y perla"):
+                                        ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE GEMA (QUILATES TOTALES ESTIMADOS O MEDIDOS)</span>")
+                                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
+                                            ui.select(GEM_SPECIES, value=gem_state["gem"]["species"], label="Especie").on_value_change(lambda e: (gem_state["gem"].update({"species": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.number(label="Quilates Totales (ct)", value=float(gem_state["gem"]["carat"] or 0), min=0.0, step=0.05).on_value_change(lambda e: (gem_state["gem"].update({"carat": float(e.value or 0)}), render_gem_controls())).classes("w-full")
+                                            ui.select(GEM_COLORS, value=gem_state["gem"]["color"], label="Color").on_value_change(lambda e: (gem_state["gem"].update({"color": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.select(GEM_CLARITIES, value=gem_state["gem"]["clarity"], label="Pureza").on_value_change(lambda e: (gem_state["gem"].update({"clarity": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.select(GEM_CUTS, value=gem_state["gem"]["cut"], label="Talla").on_value_change(lambda e: (gem_state["gem"].update({"cut": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.select(GEM_NATURES, value=gem_state["gem"]["nature"], label="Naturaleza").on_value_change(lambda e: (gem_state["gem"].update({"nature": e.value}), render_gem_controls())).classes("w-full")
+
+                                    if gem_state["subject"] in ("Perla", "Gema y perla"):
+                                        ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE PERLA</span>")
+                                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
+                                            ui.select(PEARL_NATURES, value=gem_state["pearl"]["nature"], label="Naturaleza").on_value_change(lambda e: (gem_state["pearl"].update({"nature": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.number(label="Número de perlas", value=int(gem_state["pearl"]["count"] or 0), min=0, step=1).on_value_change(lambda e: (gem_state["pearl"].update({"count": int(e.value or 0)}), render_gem_controls())).classes("w-full")
+                                            ui.select(PEARL_LUSTER, value=gem_state["pearl"]["luster"], label="Lustre").on_value_change(lambda e: (gem_state["pearl"].update({"luster": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.select(PEARL_NACRE, value=gem_state["pearl"]["nacre"], label="Nácar").on_value_change(lambda e: (gem_state["pearl"].update({"nacre": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.select(PEARL_SURFACE, value=gem_state["pearl"]["surface"], label="Superficie").on_value_change(lambda e: (gem_state["pearl"].update({"surface": e.value}), render_gem_controls())).classes("w-full")
+                                            ui.select(PEARL_MATCHING, value=gem_state["pearl"]["matching"], label="Matching").on_value_change(lambda e: (gem_state["pearl"].update({"matching": e.value}), render_gem_controls())).classes("w-full")
+
+                                payload = {
+                                    "applies": gem_state["applies"],
+                                    "subject": gem_state["subject"],
+                                    "gem": gem_state["gem"],
+                                    "pearl": gem_state["pearl"],
+                                    "setting": gem_state["setting"],
+                                    "authorship": gem_state["authorship"],
+                                    "metal": {"kind": gem_state["metal_kind"], "grams": gem_state["metal_grams"]},
+                                }
+                                spot = market_engine.get_metal_spot_prices()
+                                valuation = value_piece(payload, spot)
+                                payload["valuation"] = valuation
+
+                                if gem_state["applies"]:
+                                    metal_val = "Introduzca gramos arriba para calcular metal" if valuation["metal_pending"] else format_gem_eur(valuation["metal_eur"])
+                                    ui.html(
+                                        "<div class='spec-table my-2'>"
+                                        f"<div class='spec-row'><span class='spec-label'>Metal Base</span><span class='spec-value'>{metal_val}</span></div>"
+                                        f"<div class='spec-row'><span class='spec-label'>Valor Gema / Perla</span><span class='spec-value'>{format_gem_eur(valuation['gem_eur'])} · {format_gem_eur(valuation['pearl_eur'])}</span></div>"
+                                        f"<div class='spec-row'><span class='spec-label'>Prima Autoría</span><span class='spec-value'>{format_gem_eur(valuation['authorship_eur'])}</span></div>"
+                                        f"<div class='spec-row'><span class='spec-label'>Tasación Gemológica</span><span class='spec-value'>{format_gem_eur(valuation['piece_eur'])}</span></div>"
+                                        "</div>"
+                                    )
+
+                                def save_gem():
+                                    persist_gemology(case_id, payload, dictamen_text)
+                                    ui.notify("Gemología guardada y fijada como tasación de la pieza", type="positive")
+                                    refresh_ui()
+
+                                if can_save_expedient():
+                                    editorial_button(
+                                        "FIJAR ESTA TASACIÓN GEMOLÓGICA EN LA FICHA",
+                                        on_click=save_gem,
+                                    )
+
+                        render_gem_controls()
+
+                    with ui.column().classes("lg:col-span-6 w-full gap-4"):
+                        ui.html("<span class='micro-coord'>02 // INTELIGENCIA LOGÍSTICA Y ARANCELARIA</span>")
+                        block = ficha.get("logistics_intelligence") or {}
+                        origin = block.get("origin_location") or {}
+                        true_eur = val_info["mid_eur"]
+                        cities = list(ORIGIN_GAZETTEER) + [CUSTOM_CITY_OPTION]
+                        saved_city = origin.get("city") or ""
+                        known_names = {fold_place_name(name): name for name in ORIGIN_GAZETTEER}
+                        current_city = known_names.get(fold_place_name(saved_city), CUSTOM_CITY_OPTION if saved_city else cities[0])
+
+                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-12 gap-4 items-end"):
+                            city_select = ui.select(cities, value=current_city, label="Origen del hallazgo").classes("sm:col-span-7 w-full")
+                            custom_city_in = ui.input(
+                                label="Ciudad o mercado",
+                                value="" if fold_place_name(saved_city) in known_names else saved_city,
+                                placeholder="Ej. Dubái, Hong Kong, Singapur"
+                            ).classes("sm:col-span-5 w-full")
+                            custom_city_in.bind_visibility_from(city_select, "value", value=CUSTOM_CITY_OPTION)
+
+                        def calc_logistics():
+                            chosen = custom_city_in.value if city_select.value == CUSTOM_CITY_OPTION else city_select.value
+                            if not (chosen or "").strip():
+                                ui.notify("Escribe la ciudad o el mercado para calcular la viabilidad.", type="warning")
+                            elif true_eur is None:
+                                ui.notify("El dictamen no fija una tasación en euros.", type="warning")
+                            else:
+                                fresh = build_logistics_intelligence(chosen, true_eur)
+                                fresh["appraisal_basis"] = {
+                                    "eur": true_eur,
+                                    "label": val_info["display"],
+                                    "range_label": val_info["display"],
+                                }
+                                persist_logistics_intelligence(case_id, fresh)
+                                refresh_ui()
+
+                        if can_save_expedient():
+                            editorial_button("CALCULAR VIABILIDAD LOGÍSTICA", on_click=calc_logistics)
+
+                        if block and true_eur is not None:
+                            saved_origin = block.get("origin_location") or {}
+                            brief = logistics_brief(saved_origin, block.get("target_hubs") or [], true_eur)
+                            ui.html(
+                                "<div class='spec-table mt-2'>"
+                                f"<div class='spec-row'><span class='spec-label'>Estrategia</span><span class='spec-value'>{html.escape(brief['strategy'])}</span></div>"
+                                f"<div class='spec-row'><span class='spec-label'>Razonamiento</span><span class='spec-value'>{html.escape(brief['reason'])}</span></div>"
+                                f"<div class='spec-row'><span class='spec-label'>Base Aplicada</span><span class='spec-value'>{html.escape(saved_origin.get('city', '—'))} · {html.escape(val_info['display'])}</span></div>"
+                                "</div>"
+                            )
+                            with ui.expansion("DESGLOSE POR PLAZA COMERCIAL").classes("w-full border border-[#141413] p-2"):
+                                local_value = brief["rows"][0]["market_value_eur"] if brief["rows"] else true_eur
+                                for row in brief["rows"]:
+                                    if row["plaza"].startswith("Venta en origen"):
+                                        ui.markdown(f"**{row['plaza']}.** Base aplicada: {format_eur(row['market_value_eur'])}.")
+                                        continue
+                                    premium = row["market_value_eur"] - local_value
+                                    costs = row["insured_transport_eur"] + row["customs_eur"]
+                                    if costs > max(premium, 0):
+                                        ui.markdown(f"**{row['plaza']}.** La prima de plaza queda absorbida por el tránsito y el arancel.")
+                                    else:
+                                        ui.markdown(
+                                            f"**{row['plaza']}.** Valor {format_eur(row['market_value_eur'])}. "
+                                            f"Tránsito {format_eur(row['insured_transport_eur'])}. "
+                                            f"Arancel {format_eur(row['customs_eur'])}."
+                                        )
+
+            elif active_tab == "forense":
+                ui.html("<span class='micro-coord'>DOSSIER PERICIAL COMPLETO (SIN DUPLICADOS, LECTURA CONTINUA)</span>")
+                ui.markdown(categorized["forense"]).classes("editorial-reader w-full")
+
+    refresh_ui()
+
+
+@app.get("/health")
+def health_check():
+    """Endpoint público para balanceadores y HEALTHCHECK del contenedor."""
+    return {"status": "ok", "service": "ch-curiosities-hunter"}
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    os.makedirs("data/temp", exist_ok=True)
+    _env = (os.getenv("ENV") or "development").lower()
+    _is_production = _env == "production"
+    ui.run(
+        title="CH Curiosities Hunter",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8080")),
+        reload=not _is_production,
+        show=not _is_production,
+        reconnect_timeout=180.0,
+        storage_secret=os.getenv("NICEGUI_STORAGE_SECRET", "ch-curiosities-hunter-secret-key"),
+    )

@@ -2,19 +2,36 @@ import os
 import json
 import time
 import shutil
+from datetime import datetime
 import re
+from pathlib import Path
 from PIL import Image
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from src.research.web_search import WebSearchEngine
 from src.research.visual_search import VisualSearchEngine
 from src.research.punchmarks_db import get_punchmarks_context_for_prompt
 
-GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+
+def resolve_gemini_api_key() -> str:
+    """Lee la clave de Gemini desde el entorno ya cargado con .env."""
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value
+    return ""
 
 CASES_DIR = os.path.join("data", "cases")
 INDEX_PATH = os.path.join("data", "library_index.json")
 AUDIT_LOG_PATH = os.path.join("data", "agent_audit.log")
+
+
+def _pipeline_log(step: str) -> None:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{stamp}] {step}", flush=True)
 
 
 def sanitize_context_notes(raw_notes: str) -> str:
@@ -35,6 +52,123 @@ def sanitize_context_notes(raw_notes: str) -> str:
     text = re.sub(r"\s*[—–]+\s*", ". ", text)
     text = re.sub(r"\s+", " ", text).strip(" .-")
     return text
+
+
+def _split_legacy_context_notes(context_notes: str) -> tuple[str, list]:
+    """Separa el prefijo original de los fragmentos de respuesta unidos por ';'."""
+    text = (context_notes or "").strip()
+    if not text or text == "Sin notas adicionales":
+        return "", []
+    if ". " in text:
+        base, rest = text.split(". ", 1)
+        parts = [part.strip() for part in rest.split(";") if part.strip()]
+        return base.strip(), parts
+    if ";" in text:
+        parts = [part.strip() for part in text.split(";") if part.strip()]
+        return "", parts
+    return text, []
+
+
+def _compose_context_notes(intake_notes: str, question_answers: dict) -> str:
+    """Texto de trabajo para el modelo. No es la ficha persistida."""
+    lines = []
+    base = sanitize_context_notes(intake_notes or "")
+    if base and base != "Sin notas adicionales":
+        lines.append(f"Ingreso: {base}")
+    for key, value in (question_answers or {}).items():
+        if str(key).startswith("__legacy_"):
+            continue
+        answer = "" if value is None else str(value).strip()
+        if not answer or answer.lower() in {"pendiente", "n/a", "na", "—", "-"}:
+            continue
+        lines.append(f"Pregunta: {key}\nRespuesta: {answer}")
+    return "\n".join(lines)
+
+
+def apply_interrogation_update(existing_metadata: dict, pending_questions: list, answers_by_index: dict) -> dict:
+    """Sustituye la respuesta de cada cuestión por el input actual. Un campo en blanco queda vacío."""
+    metadata = existing_metadata or {}
+    answers = {str(key): str(value or "") for key, value in (metadata.get("question_answers") or {}).items()}
+    intake = metadata.get("intake_notes")
+    if intake is None:
+        intake, legacy_parts = _split_legacy_context_notes(metadata.get("context_notes", ""))
+        if not answers and legacy_parts and pending_questions:
+            start = max(0, len(legacy_parts) - len(pending_questions))
+            for offset, part in enumerate(legacy_parts[:start]):
+                answers[f"__legacy_{offset}"] = part
+            for offset, question in enumerate(pending_questions):
+                if start + offset < len(legacy_parts):
+                    answers[question] = legacy_parts[start + offset]
+        elif not answers and legacy_parts:
+            for offset, part in enumerate(legacy_parts):
+                answers[f"__legacy_{offset}"] = part
+
+    for index, question in enumerate(pending_questions or []):
+        raw = answers_by_index.get(index, "")
+        answers[str(question)] = raw.strip() if isinstance(raw, str) else ""
+
+    return {
+        "intake_notes": intake or "",
+        "question_answers": answers,
+        "context_notes": intake or "",
+        "prompt_context": _compose_context_notes(intake or "", answers),
+    }
+
+
+def case_label(record: dict) -> str:
+    """Nombre visible de la ficha. No usa el volcado concatenado de respuestas."""
+    if not record:
+        return "Ficha Técnica"
+    intake = str(record.get("intake_notes") or "").strip()
+    if intake and intake != "Sin notas adicionales":
+        return intake
+    description = str(record.get("object_description") or "").strip()
+    notes = str(record.get("context_notes") or "").strip()
+    flat_dump = ";" in notes or "\nPregunta:" in notes
+    if description and "analizada por visión" not in description:
+        return description
+    if notes and not flat_dump and notes != "Sin notas adicionales" and "analizada por visión" not in notes:
+        return notes
+    if "analizada por visión" in description or "analizada por visión" in notes:
+        return "Ficha Técnica"
+    return description or "Ficha Técnica"
+
+
+def relationalize_metadata(metadata: dict) -> dict:
+    """Convierte un volcado plano heredado en campos separados, sin reescribirlo como cadena."""
+    record = dict(metadata or {})
+    answers = record.get("question_answers")
+    notes = str(record.get("context_notes") or "")
+    if answers or ";" not in notes:
+        return record
+    intake, parts = _split_legacy_context_notes(notes)
+    record["intake_notes"] = record.get("intake_notes") or intake
+    record["question_answers"] = {f"__legacy_{index}": part for index, part in enumerate(parts)}
+    record["context_notes"] = record.get("intake_notes") or ""
+    return record
+
+
+def index_entry_from_metadata(metadata: dict, folder_path: str) -> dict:
+    """Copia el expediente al índice sin unir respuestas en una sola cadena."""
+    stored_answers = metadata.get("question_answers") or {}
+    resolved = metadata.get("resolved_questions") or []
+    notes = str(metadata.get("intake_notes") or "")
+    raw_notes = str(metadata.get("context_notes") or "")
+    if not notes and ";" not in raw_notes and "\nPregunta:" not in raw_notes:
+        notes = raw_notes
+    return {
+        "case_id": metadata.get("case_id"),
+        "object_description": metadata.get("object_description", ""),
+        "intake_notes": metadata.get("intake_notes", ""),
+        "question_answers": stored_answers if isinstance(stored_answers, dict) else {},
+        "resolved_questions": resolved if isinstance(resolved, list) else [],
+        "context_notes": notes,
+        "image_path": metadata.get("image_path"),
+        "folder_path": folder_path,
+        "status": metadata.get("status", "active"),
+        "logistics_intelligence": metadata.get("logistics_intelligence") or {},
+        "gemology_data": metadata.get("gemology_data") or {},
+    }
 
 
 class CastleLibrary:
@@ -105,33 +239,36 @@ class CastleLibrary:
             except Exception:
                 pass
 
-        flat_notes = sanitize_context_notes(context_notes) or "Sin notas adicionales"
+        flat_notes = sanitize_context_notes(context_notes)
+        has_answer_state = "question_answers" in existing_metadata or "intake_notes" in existing_metadata
+        if not flat_notes and not has_answer_state:
+            flat_notes = "Sin notas adicionales"
 
-        metadata = {
+        metadata = dict(existing_metadata)
+        metadata.update({
             "case_id": case_id,
             "object_description": object_description,
-            "context_notes": flat_notes,
             "image_path": permanent_primary_image or existing_metadata.get("image_path"),
             "dictamen_path": md_path,
             "successful_queries": successful_queries or existing_metadata.get("successful_queries", []),
             "resolved_questions": existing_metadata.get("resolved_questions", []),
             "timestamp": time.time()
-        }
+        })
+        if has_answer_state:
+            metadata["intake_notes"] = existing_metadata.get("intake_notes", "")
+            metadata["question_answers"] = existing_metadata.get("question_answers", {})
+            metadata["context_notes"] = existing_metadata.get("intake_notes", "") or ""
+        else:
+            metadata["context_notes"] = flat_notes
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
         index_data = cls.get_index()
         index_data["cataloged_cases"] = [x for x in index_data.get("cataloged_cases", []) if x.get("case_id") != case_id]
-        index_data["cataloged_cases"].append({
-            "case_id": case_id,
-            "object_description": object_description,
-            "context_notes": flat_notes,
-            "image_path": permanent_primary_image or existing_metadata.get("image_path"),
-            "folder_path": case_folder
-        })
+        index_data["cataloged_cases"].append(index_entry_from_metadata(metadata, case_folder))
 
         if successful_queries:
-            base_text = flat_notes if (flat_notes and flat_notes != "Sin notas adicionales") else object_description
+            base_text = metadata.get("context_notes") if metadata.get("context_notes") not in ("", "Sin notas adicionales") else object_description
             key_tag = base_text.split()[0].upper() if base_text else "GENERAL"
             
             if key_tag not in index_data["search_queries_log"]:
@@ -144,6 +281,38 @@ class CastleLibrary:
             json.dump(index_data, f, indent=2, ensure_ascii=False)
 
         cls._log_audit(f"Caso {case_id} guardado con éxito en {case_folder}")
+
+    @classmethod
+    def load_metadata(cls, case_id: str) -> dict:
+        meta_path = os.path.join(CASES_DIR, case_id or "", "metadata.json")
+        if not case_id or not os.path.exists(meta_path):
+            return {}
+        try:
+            with open(meta_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @classmethod
+    def consolidate_case(cls, case_id: str) -> bool:
+        """Pasa el caso activo a ficha conservando metadatos relacionales, sin volcado plano."""
+        metadata = relationalize_metadata(cls.load_metadata(case_id))
+        if not metadata:
+            return False
+        case_folder = os.path.join(CASES_DIR, case_id)
+        metadata["status"] = "consolidated"
+        meta_path = os.path.join(case_folder, "metadata.json")
+        with open(meta_path, "w", encoding="utf-8") as handle:
+            json.dump(metadata, handle, indent=2, ensure_ascii=False)
+
+        index_data = cls.get_index()
+        index_data["cataloged_cases"] = [item for item in index_data.get("cataloged_cases", []) if item.get("case_id") != case_id]
+        index_data["cataloged_cases"].append(index_entry_from_metadata(metadata, case_folder))
+        with open(INDEX_PATH, "w", encoding="utf-8") as handle:
+            json.dump(index_data, handle, indent=2, ensure_ascii=False)
+        cls._log_audit(f"Expediente {case_id} consolidado como ficha sin aplanar metadatos.")
+        return True
 
     @classmethod
     def get_all_cases(cls) -> list:
@@ -189,8 +358,9 @@ def clean_dictamen_for_output(raw_dictamen: str) -> tuple[str, list]:
 class LocalAIAgent:
     def __init__(self, model_name="gemini-3.8-flash"):
         self.model_name = model_name
-        if GOOGLE_API_KEY:
-            self.client = genai.Client(api_key=GOOGLE_API_KEY)
+        api_key = resolve_gemini_api_key()
+        if api_key:
+            self.client = genai.Client(api_key=api_key)
         else:
             try:
                 self.client = genai.Client()
@@ -202,6 +372,8 @@ class LocalAIAgent:
         self.visual_search_engine = VisualSearchEngine()
 
     def _execute_deep_research(self, object_desc: str, notes: str) -> tuple[str, list]:
+        _pipeline_log("[2/4] Consultando mercado y catálogos web...")
+        t0 = time.perf_counter()
         clean_notes = notes.replace("FLAQUE", "PLAQUE").replace("ORG", "OR G")
         historical_queries = self.library.get_heuristic_queries(object_desc, clean_notes)
         
@@ -224,21 +396,39 @@ class LocalAIAgent:
                     combined_results.append(item)
                     
         formatted_web = self.search_engine.format_search_results_for_prompt(combined_results)
+        _pipeline_log(f"[2/4] Mercado listo ({time.perf_counter() - t0:.1f}s, {len(combined_results)} resultados)")
         return formatted_web, executed_queries
 
-    def analyze_evidence(self, object_description: str, context_notes: str = "", image_paths: list = None, case_id: str = "DEFAULT") -> str:
+    def analyze_evidence(
+        self,
+        object_description: str,
+        context_notes: str = "",
+        image_paths: list = None,
+        case_id: str = "DEFAULT",
+        persist_case: bool = False,
+    ) -> str:
         if not self.client:
             return "[ERR_L2_GEMINI_API_KEY_MISSING]: No se ha configurado la clave de API de Gemini Pro."
+
+        _pipeline_log("[1/4] Preparando imágenes para visión...")
+        t_pipeline = time.perf_counter()
+        usable_paths = [p for p in (image_paths or []) if p and os.path.exists(p)]
+        _pipeline_log(f"[1/4] {len(usable_paths)} archivo(s) local(es) listos ({time.perf_counter() - t_pipeline:.1f}s)")
 
         clean_context = context_notes.replace("FLAQUE", "PLAQUE").replace("ORG", "OR G")
         web_context, successful_queries = self._execute_deep_research(object_description, clean_context)
 
         visual_context = ""
-        primary_image_path = image_paths[0] if (image_paths and len(image_paths) > 0 and image_paths[0]) else None
-        
-        if primary_image_path and os.path.exists(primary_image_path):
+        primary_image_path = usable_paths[0] if usable_paths else None
+
+        if primary_image_path:
+            _pipeline_log("[3/4] Búsqueda visual (Google Lens / SerpApi)...")
+            t_vis = time.perf_counter()
             visual_response = self.visual_search_engine.search_by_image_path(primary_image_path, max_results=4)
             visual_context = self.visual_search_engine.format_visual_results(visual_response)
+            _pipeline_log(f"[3/4] Búsqueda visual finalizada ({time.perf_counter() - t_vis:.1f}s)")
+        else:
+            _pipeline_log("[3/4] Sin imagen local válida; se omite búsqueda visual")
 
         punchmarks_knowledge = get_punchmarks_context_for_prompt()
 
@@ -275,8 +465,8 @@ class LocalAIAgent:
         )
 
         contents = []
-        if image_paths:
-            for img_p in image_paths:
+        if usable_paths:
+            for img_p in usable_paths:
                 if img_p and os.path.exists(img_p):
                     try:
                         pil_img = Image.open(img_p)
@@ -293,7 +483,9 @@ class LocalAIAgent:
 
         max_retries = 3
         dictamen = None
-        
+
+        _pipeline_log("[4/4] Llamando a IA (Gemini)...")
+        t_ia = time.perf_counter()
         for attempt in range(max_retries):
             try:
                 response = self.client.models.generate_content(
@@ -312,16 +504,20 @@ class LocalAIAgent:
                     time.sleep(3 * (attempt + 1))
                 else:
                     return f"[ERR_L3_GEMINI_INFERENCE_FAILED]: {str(e)}"
-        
-        self.library.save_case(
-            case_id=case_id,
-            object_description=object_description,
-            context_notes=clean_context,
-            dictamen=dictamen,
-            image_paths=image_paths,
-            successful_queries=successful_queries
-        )
-        
+
+        _pipeline_log(f"[4/4] Dictamen generado ({time.perf_counter() - t_ia:.1f}s)")
+        _pipeline_log(f"Pipeline completo ({time.perf_counter() - t_pipeline:.1f}s total)")
+
+        if persist_case:
+            self.library.save_case(
+                case_id=case_id,
+                object_description=object_description,
+                context_notes=clean_context,
+                dictamen=dictamen,
+                image_paths=usable_paths,
+                successful_queries=successful_queries,
+            )
+
         return dictamen
 
     def update_appraisal(self, case_folder: str, object_desc: str, notes: str) -> str:

@@ -1,0 +1,345 @@
+"""Orquestador base del consejo de expertos (roadmap 2.1)."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from agents.forensic_appraiser import UniversalForensicAgent
+from agents.logistics_arbitrage import LogisticsArbitrageAgent
+from agents.market_analyst import MarketIntelligenceAgent
+from agents.schemas import ForensicReport, LogisticsArbitrageReport, MarketValuationReport
+from src.research.ai_agent import LocalAIAgent
+
+
+def _council_log(step: str) -> None:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{stamp}] {step}", flush=True)
+
+
+def _forensic_protocol_block(report: ForensicReport, rubric_version: int | None = None) -> str:
+    dims = report.dimensions_mm
+    dim_bits = []
+    for label, val in (
+        ("L", dims.length),
+        ("A", dims.width),
+        ("H", dims.height),
+        ("Ø", dims.diameter),
+    ):
+        if val is not None:
+            dim_bits.append(f"{label}={val} mm")
+    dim_line = ", ".join(dim_bits) if dim_bits else "Pendiente de cotas verificadas en mano"
+
+    attrs = "\n".join(f"  · {k}: {v}" for k, v in (report.key_attributes or {}).items()) or "  · —"
+    materials = ", ".join(report.primary_materials) if report.primary_materials else "Por confirmar"
+    signals = "\n".join(f"  - {s}" for s in report.authenticity_signals) or "  - —"
+    anomalies = "\n".join(f"  - {a}" for a in report.anomalies_detected) or "  - Ninguna crítica"
+
+    version_note = f" (protocolo v{rubric_version})" if rubric_version else ""
+    return (
+        f"[BLOQUE FORENSE UNIVERSAL — {report.taxonomy_key}{version_note}]\n"
+        f"Categoría pericial: {report.category_name}\n"
+        f"Materiales primarios: {materials}\n"
+        f"Pureza / grado: {report.purity_or_grade or '—'}\n"
+        f"Peso / volumen estimado: {report.estimated_weight_or_volume or '—'}\n"
+        f"Cotas forenses: {dim_line}\n"
+        f"Atributos clave:\n{attrs}\n"
+        f"Señales de autenticidad:\n{signals}\n"
+        f"Anomalías:\n{anomalies}\n"
+        f"Confianza forense: {report.confidence_score}%\n"
+        f"Resumen técnico: {report.technical_summary}\n"
+    )
+
+
+def _merge_cad_seed(report: ForensicReport) -> dict:
+    """Semilla CAD compatible con ui/blueprints (cotas en mm, sin categorías fijas)."""
+    cad: dict = {}
+    dims = report.dimensions_mm
+    if dims.diameter is not None:
+        cad["cota_a_mm"] = str(dims.diameter)
+    if dims.width is not None:
+        cad["cota_b_mm"] = str(dims.width)
+    if dims.height is not None:
+        cad["cota_c_mm"] = str(dims.height)
+    if dims.length is not None:
+        cad["cota_d_mm"] = str(dims.length)
+
+    attrs = report.key_attributes or {}
+    for key, value in attrs.items():
+        lower = key.casefold()
+        if "peso" in lower and value:
+            cad.setdefault("weight_g", str(value))
+        if "gema" in lower or "piedra" in lower:
+            cad.setdefault("extra_observations", str(value))
+
+    if report.estimated_weight_or_volume and "weight_g" not in cad:
+        cad.setdefault("weight_g", report.estimated_weight_or_volume)
+
+    if report.primary_materials:
+        cad.setdefault(
+            "extra_observations",
+            f"Materiales: {', '.join(report.primary_materials)}",
+        )
+    cad["forensic_taxonomy"] = report.taxonomy_key
+    cad["forensic_category"] = report.category_name
+    return cad
+
+
+def _market_intelligence_block(report: MarketValuationReport | None) -> str:
+    if report is None:
+        return ""
+    internals = "\n".join(
+        f"  - {item.title} ({item.similarity_or_relevance}) · {item.notes[:180]}"
+        for item in (report.internal_precedents_used or [])
+    ) or "  - Sin precedentes internos indexados"
+    externals = "\n".join(
+        f"  - {item.title}: {item.price_estimate} · {item.notes[:140]}"
+        for item in (report.external_comparables or [])
+    ) or "  - Sin comparables externos destacados"
+    return (
+        "[BLOQUE INTELIGENCIA DE MERCADO — RAG GALERÍA CH]\n"
+        f"Rango estimado: {report.estimated_value_low} — {report.estimated_value_high} {report.currency}\n"
+        f"Techo adquisición recomendado: {report.recommended_acquisition_ceiling}\n"
+        f"Tendencia de demanda: {report.demand_trend}\n"
+        f"Precedentes internos (pgvector):\n{internals}\n"
+        f"Comparables externos:\n{externals}\n"
+        f"Razonamiento: {report.pricing_rationale}\n"
+    )
+
+
+def _append_market_dictamen(dictamen_text: str, report: MarketValuationReport | None) -> str:
+    if report is None or str(dictamen_text).startswith("[ERR"):
+        return dictamen_text
+    block = (
+        "\n\n---\n"
+        "### 💹 INTELIGENCIA DE MERCADO (RAG + COMPARABLES)\n"
+        f"- **Rango:** {report.estimated_value_low} — {report.estimated_value_high} {report.currency}\n"
+        f"- **Techo adquisición:** {report.recommended_acquisition_ceiling}\n"
+        f"- **Demanda:** {report.demand_trend}\n\n"
+        f"{report.pricing_rationale}\n"
+    )
+    if report.internal_precedents_used:
+        block += "\n**Precedentes internos CH:**\n"
+        block += "\n".join(
+            f"{i}. {c.title} (sim={c.similarity_or_relevance})"
+            for i, c in enumerate(report.internal_precedents_used, 1)
+        )
+        block += "\n"
+    return f"{dictamen_text.rstrip()}{block}"
+
+
+def _append_forensic_dictamen(dictamen_text: str, report: ForensicReport) -> str:
+    if str(dictamen_text).startswith("[ERR"):
+        return dictamen_text
+    block = (
+        "\n\n---\n"
+        "### 🔬 PERITAJE FORENSE UNIVERSAL (CONSEJO DE EXPERTOS)\n"
+        f"- **Taxonomía:** {report.taxonomy_key}\n"
+        f"- **Categoría:** {report.category_name}\n"
+        f"- **Confianza:** {report.confidence_score}%\n\n"
+        f"{report.technical_summary}\n"
+    )
+    if report.anomalies_detected:
+        block += "\n**Anomalías detectadas:**\n"
+        block += "\n".join(f"{i}. {a}" for i, a in enumerate(report.anomalies_detected, 1))
+        block += "\n"
+    return f"{dictamen_text.rstrip()}{block}"
+
+
+def _logistics_intelligence_block(report: LogisticsArbitrageReport | None) -> str:
+    if report is None:
+        return ""
+    alerts = "\n".join(f"  - {a}" for a in (report.regulatory_alerts or [])) or "  - Ninguna alerta crítica"
+    cites = "SÍ — revisión CITES/patrimonio" if report.cites_or_restricted_materials else "No detectada en esta fase"
+    routes = "\n".join(
+        (
+            f"  - {r.hub_city}: venta est. {r.estimated_sale_price:.0f} EUR | "
+            f"comisión {r.auction_or_broker_fee_pct:.1f}% | aranceles/IVA {r.import_duty_vat_pct:.1f}% | "
+            f"transporte+seguro {r.shipping_insurance_cost:.0f} EUR | neto {r.net_proceeds_estimate:.0f} EUR"
+        )
+        for r in (report.route_comparison or [])
+    ) or "  - Sin rutas calculadas"
+    return (
+        "[BLOQUE LOGÍSTICA Y ARBITRAJE INTERNACIONAL]\n"
+        f"HS Code estimado: {report.hs_code_estimate} — {report.hs_code_description}\n"
+        f"Alertas regulatorias:\n{alerts}\n"
+        f"CITES / materiales restringidos: {cites}\n"
+        f"Hub primario: {report.recommended_primary_hub} · Respaldo: {report.recommended_backup_hub}\n"
+        f"Precio máximo compra recomendado: {report.recommended_max_buy_price:.2f} EUR\n"
+        f"Comparativa de plazas:\n{routes}\n"
+        f"Margen neto: {report.net_margin_rationale}\n"
+    )
+
+
+def _append_logistics_dictamen(dictamen_text: str, report: LogisticsArbitrageReport | None) -> str:
+    if report is None or str(dictamen_text).startswith("[ERR"):
+        return dictamen_text
+
+    table_lines = [
+        "| Plaza | Venta est. (EUR) | Comisión % | Aranceles/IVA % | Transporte+seguro | Neto (EUR) |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for row in report.route_comparison or []:
+        table_lines.append(
+            f"| {row.hub_city} | {row.estimated_sale_price:.0f} | {row.auction_or_broker_fee_pct:.1f} | "
+            f"{row.import_duty_vat_pct:.1f} | {row.shipping_insurance_cost:.0f} | {row.net_proceeds_estimate:.0f} |"
+        )
+    table = "\n".join(table_lines)
+    cites_line = (
+        "**⚠️ CITES / materiales restringidos:** Sí — requiere despacho especializado.\n"
+        if report.cites_or_restricted_materials
+        else "**CITES / materiales restringidos:** No señalados en esta fase.\n"
+    )
+    alerts = "\n".join(f"- {a}" for a in (report.regulatory_alerts or [])) or "- Sin alertas adicionales"
+    block = (
+        "\n\n---\n"
+        "### 🌍 Logística, Aduanas y Arbitraje Internacional\n"
+        f"- **HS Code estimado:** `{report.hs_code_estimate}` — {report.hs_code_description}\n"
+        f"{cites_line}"
+        f"- **Hub recomendado:** {report.recommended_primary_hub} (respaldo: {report.recommended_backup_hub})\n"
+        f"- **Precio máximo de compra:** {report.recommended_max_buy_price:.2f} EUR\n\n"
+        f"**Alertas regulatorias:**\n{alerts}\n\n"
+        f"**Comparativa de plazas internacionales:**\n{table}\n\n"
+        f"**Razonamiento de margen neto:** {report.net_margin_rationale}\n"
+    )
+    return f"{dictamen_text.rstrip()}{block}"
+
+
+class ExpertCouncilOrchestrator:
+    """Coordina el agente forense universal y el dictamen legado compatible con NiceGUI."""
+
+    def __init__(
+        self,
+        forensic_agent: UniversalForensicAgent | None = None,
+        legacy_agent: LocalAIAgent | None = None,
+        market_agent: MarketIntelligenceAgent | None = None,
+        logistics_agent: LogisticsArbitrageAgent | None = None,
+    ):
+        self.forensic_agent = forensic_agent or UniversalForensicAgent()
+        self.legacy_agent = legacy_agent
+        self.market_agent = market_agent or MarketIntelligenceAgent()
+        self.logistics_agent = logistics_agent or LogisticsArbitrageAgent()
+
+    def run_investigation(
+        self,
+        object_description: str,
+        context_notes: str,
+        image_paths: list | None,
+        case_id: str,
+        legacy_agent: LocalAIAgent | None = None,
+        supplemental_instructions: str = "",
+    ) -> dict:
+        agent = legacy_agent or self.legacy_agent
+        if agent is None:
+            return {
+                "dictamen_text": "[ERR_L2_ORCHESTRATOR_NO_AGENT]: Agente legado no configurado.",
+                "forensic_report": None,
+                "market_valuation_report": None,
+                "logistics_arbitrage_report": None,
+                "draft_extras": {},
+            }
+
+        paths = list(image_paths or [])
+        forensic_report: ForensicReport | None = None
+        market_report: MarketValuationReport | None = None
+        logistics_report: LogisticsArbitrageReport | None = None
+        rubric_version: int | None = None
+        successful_queries: list[str] = []
+
+        _council_log("[CONSEJO 1/3] Agente forense universal · protocolo y peritaje multimodal")
+        forensic_report = self.forensic_agent.appraise(
+            object_description,
+            context_notes,
+            paths,
+            case_id=case_id,
+        )
+        if forensic_report is not None:
+            from database.client import get_domain_rubric
+
+            row = get_domain_rubric(forensic_report.taxonomy_key)
+            rubric_version = int(row.version) if row else 1
+
+        enriched_notes = context_notes
+        if forensic_report is not None:
+            enriched_notes = (
+                f"{context_notes}\n\n{_forensic_protocol_block(forensic_report, rubric_version)}"
+            )
+        if supplemental_instructions:
+            enriched_notes = f"{enriched_notes}\n\n{supplemental_instructions}"
+
+        _council_log("[CONSEJO 2/3] Inteligencia de mercado · RAG galería + catálogos web")
+        web_context, successful_queries = agent._execute_deep_research(object_description, enriched_notes)
+        parsed_forensic = None
+        if forensic_report is not None:
+            parsed_forensic = (
+                forensic_report
+                if isinstance(forensic_report, ForensicReport)
+                else ForensicReport.model_validate(forensic_report)
+            )
+        market_model = self.market_agent.analyze(
+            parsed_forensic,
+            object_description,
+            context_notes,
+            web_context,
+            case_id,
+        )
+        if market_model is not None:
+            market_report = market_model
+            enriched_notes = f"{enriched_notes}\n\n{_market_intelligence_block(market_report)}"
+            if web_context:
+                enriched_notes = f"{enriched_notes}\n\n[CONTEXTO WEB DE MERCADO]\n{web_context}"
+
+        _council_log("[CONSEJO 3/3] Logística, aduanas y arbitraje internacional")
+        logistics_model = self.logistics_agent.analyze(
+            parsed_forensic,
+            market_report,
+            object_description,
+            context_notes,
+            case_id,
+        )
+        logistics_report = logistics_model
+        enriched_notes = f"{enriched_notes}\n\n{_logistics_intelligence_block(logistics_report)}"
+
+        _council_log("[MoE] Dictamen integrado · tasación y Buyer Search (agente legado)")
+        dictamen_text = agent.analyze_evidence(
+            object_description=object_description,
+            context_notes=enriched_notes,
+            image_paths=paths,
+            case_id=case_id,
+            persist_case=False,
+        )
+
+        if parsed_forensic is not None:
+            dictamen_text = _append_forensic_dictamen(dictamen_text, parsed_forensic)
+        dictamen_text = _append_market_dictamen(dictamen_text, market_report)
+        dictamen_text = _append_logistics_dictamen(dictamen_text, logistics_report)
+
+        draft_extras: dict = {}
+        if parsed_forensic is not None:
+            draft_extras = {
+                "domain_taxonomy": parsed_forensic.taxonomy_key,
+                "forensic_report": parsed_forensic.model_dump(),
+                "cad_blueprint": _merge_cad_seed(parsed_forensic),
+                "object_description_hint": parsed_forensic.category_name,
+                "successful_queries": successful_queries,
+            }
+        if market_report is not None:
+            draft_extras["market_valuation_report"] = market_report.model_dump()
+        draft_extras["logistics_arbitrage_report"] = logistics_report.model_dump()
+
+        forensic_dump = None
+        if parsed_forensic is not None:
+            forensic_dump = parsed_forensic.model_dump()
+        elif forensic_report is not None:
+            forensic_dump = (
+                forensic_report.model_dump()
+                if hasattr(forensic_report, "model_dump")
+                else forensic_report
+            )
+
+        return {
+            "dictamen_text": dictamen_text,
+            "forensic_report": forensic_dump,
+            "market_valuation_report": market_report.model_dump() if market_report else None,
+            "logistics_arbitrage_report": logistics_report.model_dump(),
+            "draft_extras": draft_extras,
+        }
