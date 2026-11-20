@@ -13,6 +13,11 @@ from src.research.web_search import WebSearchEngine
 from src.research.visual_search import VisualSearchEngine
 from src.research.punchmarks_db import get_punchmarks_context_for_prompt
 
+try:
+    from agents.forensic_prompts import SERIAL_DECODING_DIRECTIVE
+except ImportError:
+    SERIAL_DECODING_DIRECTIVE = ""
+
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
@@ -449,6 +454,10 @@ class LocalAIAgent:
             "        formulando preguntas numeradas individualmente orientadas a resolver las incertidumbres restantes.\n"
             "3. RESTRICCIÓN DE GRAMAJE Y VALORACIÓN:\n"
             "   - Si se especifica un peso real medido en balanza en las notas del perito, utilízalo como verdad absoluta para el cálculo de metales. Si no se especifica, prohíbete fijar un valor de fundición absoluto y especifica explícitamente: '[PENDIENTE DE PESAJE FÍSICO EXACTO]'.\n\n"
+            f"{SERIAL_DECODING_DIRECTIVE}\n"
+            "IMPACTO EN EL DICTAMEN (OBLIGATORIO):\n"
+            "   - En la sección «📜 CATALOGACIÓN HISTÓRICA Y CONTRASTES» (DATACIÓN): desarrolla la ventana temporal inferida del serial con justificación estructural.\n"
+            "   - En la sección «🛡️ VERIFICACIÓN DE AUTENTICIDAD Y ALEACIONES»: explica si el serial valida o contradice el modelo y la época; si es indeterminado, indica qué comprobación en archivo de marca falta.\n\n"
             "INFORMACIÓN CONFIRMADA POR EL PERITO HUMANO Y OCR:\n"
             f"- Objeto: {object_description}\n"
             f"- Inscripciones/Cuños/Dotación confirmados: {clean_context}\n\n"
@@ -477,7 +486,9 @@ class LocalAIAgent:
         prompt_text = (
             f"Objeto analizado: {object_description}\n"
             f"Inscripciones y notas confirmadas: {clean_context}\n"
-            "Genera el dictamen pericial definitivo aplicando el Diccionario Maestro de Punzones, el protocolo anti-alucinación, la gestión de excepciones con preguntas guía numeradas, tasación con precios spot y Buyer Search."
+            "Genera el dictamen pericial definitivo aplicando el Diccionario Maestro de Punzones, la decodificación activa de números de serie "
+            "(DATACIÓN + VERIFICACIÓN DE AUTENTICIDAD con juicio explícito valida/contradice/indeterminado), "
+            "el protocolo anti-alucinación, la gestión de excepciones con preguntas guía numeradas, tasación con precios spot y Buyer Search."
         )
         contents.append(prompt_text)
 

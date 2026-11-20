@@ -15,6 +15,7 @@ from google.genai import types
 from PIL import Image
 from pydantic import ValidationError
 
+from agents.forensic_prompts import FORENSIC_JSON_SERIAL_FIELDS, SERIAL_DECODING_DIRECTIVE
 from agents.schemas import (
     ForensicReport,
     SynthesizedRubric,
@@ -349,7 +350,9 @@ class UniversalForensicAgent:
             "Eres perito forense universal CH. Aplica estrictamente el protocolo disciplinar entregado. "
             "No inventes categorías fuera de la taxonomía dada. Devuelve SOLO JSON ForensicReport con todos los campos, "
             "incluyendo dimensions_mm (length, width, height, diameter en mm o null), "
-            "new_protocol_insights solo si descubres criterios técnicos nuevos transferibles a futuros casos."
+            "new_protocol_insights solo si descubres criterios técnicos nuevos transferibles a futuros casos.\n\n"
+            f"{SERIAL_DECODING_DIRECTIVE}\n\n"
+            f"{FORENSIC_JSON_SERIAL_FIELDS}"
         )
         prompt = (
             f"Caso {case_id}\n"
@@ -367,16 +370,33 @@ class UniversalForensicAgent:
         raw = self._generate_json(system, prompt, image_paths)
         if not raw:
             return None
-        try:
-            report = _parse_model_json(raw, ForensicReport)
-            if report.taxonomy_key != taxonomy_key:
-                report = report.model_copy(update={"taxonomy_key": taxonomy_key})
-            if not report.category_name:
-                report = report.model_copy(update={"category_name": category_name or display_name})
-            return report
-        except (json.JSONDecodeError, ValidationError) as exc:
-            _forensic_log(f"[FORENSE B] JSON informe inválido: {exc}")
-            return None
+        repair_suffix = ""
+        for attempt in range(2):
+            try:
+                report = _parse_model_json(raw, ForensicReport)
+                if report.taxonomy_key != taxonomy_key:
+                    report = report.model_copy(update={"taxonomy_key": taxonomy_key})
+                if not report.category_name:
+                    report = report.model_copy(update={"category_name": category_name or display_name})
+                return report
+            except json.JSONDecodeError as exc:
+                _forensic_log(f"[FORENSE B] JSON informe inválido: {exc}")
+                return None
+            except ValidationError as exc:
+                if attempt == 0:
+                    repair_suffix = (
+                        f"\n\n=== CORRECCIÓN OBLIGATORIA (validación esquema) ===\n{exc}\n"
+                        "Si has_factory_serial=true, serial_decoding debe incluir los cuatro campos "
+                        "y serial_authenticity_impact debe contener valida, contradice o indeterminado."
+                    )
+                    raw = self._generate_json(system, prompt + repair_suffix, image_paths)
+                    if not raw:
+                        _forensic_log(f"[FORENSE B] Informe no cumple esquema: {exc}")
+                        return None
+                    continue
+                _forensic_log(f"[FORENSE B] Informe no cumple esquema: {exc}")
+                return None
+        return None
 
     def _generate_json(self, system_instruction: str, prompt: str, image_paths: list) -> str | None:
         contents: list = []

@@ -7,13 +7,88 @@ from datetime import datetime
 from agents.forensic_appraiser import UniversalForensicAgent
 from agents.logistics_arbitrage import LogisticsArbitrageAgent
 from agents.market_analyst import MarketIntelligenceAgent
-from agents.schemas import ForensicReport, LogisticsArbitrageReport, MarketValuationReport
+from agents.schemas import (
+    SERIAL_DECODING_FIELD_KEYS,
+    ForensicReport,
+    LogisticsArbitrageReport,
+    MarketValuationReport,
+    infer_parent_domain,
+    serial_decoding_dict,
+)
+from utils.markdown_format import renumber_markdown_headers
 from src.research.ai_agent import LocalAIAgent
+
+
+def _forensic_report_dict(report: ForensicReport) -> dict:
+    data = report.model_dump()
+    if not data.get("parent_domain"):
+        try:
+            from database.client import get_domain_rubric
+
+            row = get_domain_rubric(report.taxonomy_key)
+            if row and row.parent_domain:
+                data["parent_domain"] = row.parent_domain
+            else:
+                data["parent_domain"] = infer_parent_domain(report.taxonomy_key)
+        except Exception:
+            data["parent_domain"] = infer_parent_domain(report.taxonomy_key)
+    return data
 
 
 def _council_log(step: str) -> None:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{stamp}] {step}", flush=True)
+
+
+def _forensic_serial_context(report: ForensicReport) -> str:
+    """Texto estructurado para que el dictamen legacy use DATACIÓN y autenticidad por serie."""
+    attrs = serial_decoding_dict(report)
+    parts: list[str] = []
+    for key in SERIAL_DECODING_FIELD_KEYS:
+        val = (attrs.get(key) or "").strip()
+        if val:
+            parts.append(f"  · {key}: {val}")
+    legacy_attrs = report.key_attributes or {}
+    for key, val in legacy_attrs.items():
+        if key in SERIAL_DECODING_FIELD_KEYS or not str(val).strip():
+            continue
+        if "serial" in key.casefold() or "serie" in key.casefold():
+            parts.append(f"  · {key}: {val}")
+    if not parts:
+        summary = (report.technical_summary or "").strip()
+        if "serial" in summary.casefold() or "serie" in summary.casefold():
+            parts.append(f"  · technical_summary: {summary}")
+        else:
+            return ""
+    return "[DECODIFICACIÓN DE SERIE — SALIDA AGENTE FORENSE]\n" + "\n".join(parts) + "\n"
+
+
+def _forensic_serial_dictamen_appendix(report: ForensicReport) -> str:
+    """Refuerzo al pie del dictamen cuando el JSON forense trae campos de serie."""
+    attrs = serial_decoding_dict(report)
+    raw = (attrs.get("serial_number_raw") or "").strip()
+    fmt = (attrs.get("serial_format_analysis") or "").strip()
+    dating = (attrs.get("serial_dating_inference") or "").strip()
+    auth = (attrs.get("serial_authenticity_impact") or "").strip()
+    if not any((raw, fmt, dating, auth)):
+        return ""
+    lines = [
+        "\n\n---",
+        "#### Decodificación de serie (peritaje forense)",
+    ]
+    if raw:
+        lines.append(f"- **Número / referencia:** `{raw}`")
+    if fmt:
+        lines.append(f"- **Estructura:** {fmt}")
+    lines.append("")
+    lines.append("**DATACIÓN (lectura de serie)**")
+    lines.append(dating or "Sin ventana temporal deducible solo por formato — verificar archivo de marca.")
+    lines.append("")
+    lines.append("**VERIFICACIÓN DE AUTENTICIDAD (coherencia del serial)**")
+    lines.append(
+        auth or "Indeterminado: el serial no confirma ni desmiente el relato sin tabla de numeración del fabricante."
+    )
+    return "\n".join(lines)
 
 
 def _forensic_protocol_block(report: ForensicReport, rubric_version: int | None = None) -> str:
@@ -35,7 +110,7 @@ def _forensic_protocol_block(report: ForensicReport, rubric_version: int | None 
     anomalies = "\n".join(f"  - {a}" for a in report.anomalies_detected) or "  - Ninguna crítica"
 
     version_note = f" (protocolo v{rubric_version})" if rubric_version else ""
-    return (
+    base = (
         f"[BLOQUE FORENSE UNIVERSAL — {report.taxonomy_key}{version_note}]\n"
         f"Categoría pericial: {report.category_name}\n"
         f"Materiales primarios: {materials}\n"
@@ -48,6 +123,10 @@ def _forensic_protocol_block(report: ForensicReport, rubric_version: int | None 
         f"Confianza forense: {report.confidence_score}%\n"
         f"Resumen técnico: {report.technical_summary}\n"
     )
+    serial_ctx = _forensic_serial_context(report)
+    if serial_ctx:
+        base = base.rstrip() + "\n" + serial_ctx
+    return base
 
 
 def _merge_cad_seed(report: ForensicReport) -> dict:
@@ -142,6 +221,7 @@ def _append_forensic_dictamen(dictamen_text: str, report: ForensicReport) -> str
         block += "\n**Anomalías detectadas:**\n"
         block += "\n".join(f"{i}. {a}" for i, a in enumerate(report.anomalies_detected, 1))
         block += "\n"
+    block += _forensic_serial_dictamen_appendix(report)
     return f"{dictamen_text.rstrip()}{block}"
 
 
@@ -312,12 +392,13 @@ class ExpertCouncilOrchestrator:
             dictamen_text = _append_forensic_dictamen(dictamen_text, parsed_forensic)
         dictamen_text = _append_market_dictamen(dictamen_text, market_report)
         dictamen_text = _append_logistics_dictamen(dictamen_text, logistics_report)
+        dictamen_text = renumber_markdown_headers(dictamen_text)
 
         draft_extras: dict = {}
         if parsed_forensic is not None:
             draft_extras = {
                 "domain_taxonomy": parsed_forensic.taxonomy_key,
-                "forensic_report": parsed_forensic.model_dump(),
+                "forensic_report": _forensic_report_dict(parsed_forensic),
                 "cad_blueprint": _merge_cad_seed(parsed_forensic),
                 "object_description_hint": parsed_forensic.category_name,
                 "successful_queries": successful_queries,
@@ -328,13 +409,12 @@ class ExpertCouncilOrchestrator:
 
         forensic_dump = None
         if parsed_forensic is not None:
-            forensic_dump = parsed_forensic.model_dump()
+            forensic_dump = _forensic_report_dict(parsed_forensic)
         elif forensic_report is not None:
-            forensic_dump = (
-                forensic_report.model_dump()
-                if hasattr(forensic_report, "model_dump")
-                else forensic_report
-            )
+            if hasattr(forensic_report, "model_dump"):
+                forensic_dump = _forensic_report_dict(ForensicReport.model_validate(forensic_report))
+            else:
+                forensic_dump = dict(forensic_report)
 
         return {
             "dictamen_text": dictamen_text,

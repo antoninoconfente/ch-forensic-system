@@ -543,7 +543,18 @@ def generate_dossier_pdf(
         ("Peso / volumen", forensic.get("estimated_weight_or_volume") or "—"),
         ("Confianza forense", f"{forensic.get('confidence_score') or '—'} / 100"),
     ]
+    try:
+        from agents.schemas import SERIAL_DECODING_FIELD_KEYS
+        from utils.discipline import serial_decoding_ficha_rows
+
+        for label, val in serial_decoding_ficha_rows(case_data):
+            attr_rows.append((label, val))
+        skip_serial = set(SERIAL_DECODING_FIELD_KEYS)
+    except ImportError:
+        skip_serial = set()
     for key, val in (forensic.get("key_attributes") or {}).items():
+        if key in skip_serial:
+            continue
         attr_rows.append((str(key).replace("_", " ").title(), str(val)))
 
     story.append(Paragraph("ATRIBUTOS CLAVE", styles["label"]))

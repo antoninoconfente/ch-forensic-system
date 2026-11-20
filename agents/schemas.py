@@ -2,8 +2,18 @@
 
 import re
 import unicodedata
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+SERIAL_DECODING_FIELD_KEYS: tuple[str, ...] = (
+    "serial_number_raw",
+    "serial_format_analysis",
+    "serial_dating_inference",
+    "serial_authenticity_impact",
+)
+
+_SERIAL_IMPACT_TOKENS = ("valida", "contradice", "indeterminado")
 
 
 def normalize_snake_key(value: str) -> str:
@@ -19,6 +29,44 @@ def normalize_snake_key(value: str) -> str:
 def infer_parent_domain(taxonomy_key: str) -> str:
     parts = normalize_snake_key(taxonomy_key).split("_")
     return parts[0] if parts else normalize_snake_key(taxonomy_key)
+
+
+class SerialDecoding(BaseModel):
+    """Decodificación pericial obligatoria cuando la pieza tiene número de serie o referencia de fábrica."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    serial_number_raw: str = Field(..., min_length=1, description="Transcripción literal del serial")
+    serial_format_analysis: str = Field(..., min_length=1, description="Estructura, prefijos y longitud")
+    serial_dating_inference: str = Field(..., min_length=1, description="Ventana temporal deducida con justificación")
+    serial_authenticity_impact: str = Field(
+        ...,
+        min_length=3,
+        description="Juicio valida | contradice | indeterminado con motivo",
+    )
+
+    @field_validator(
+        "serial_number_raw",
+        "serial_format_analysis",
+        "serial_dating_inference",
+        "serial_authenticity_impact",
+    )
+    @classmethod
+    def strip_nonempty(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Campo de decodificación de serie vacío")
+        return text
+
+    @field_validator("serial_authenticity_impact")
+    @classmethod
+    def impact_must_state_verdict(cls, value: str) -> str:
+        low = value.casefold()
+        if not any(token in low for token in _SERIAL_IMPACT_TOKENS):
+            raise ValueError(
+                "serial_authenticity_impact debe contener valida, contradice o indeterminado y el motivo"
+            )
+        return value
 
 
 class DimensionsMm(BaseModel):
@@ -54,6 +102,11 @@ class ForensicReport(BaseModel):
     primary_materials: list[str] = Field(default_factory=list)
     purity_or_grade: str = ""
     estimated_weight_or_volume: str = ""
+    has_factory_serial: bool = Field(
+        default=False,
+        description="True si la pieza muestra número de serie, referencia de fábrica o edición limitada legible",
+    )
+    serial_decoding: SerialDecoding | None = None
     key_attributes: dict[str, str] = Field(default_factory=dict)
     dimensions_mm: DimensionsMm = Field(default_factory=DimensionsMm)
     authenticity_signals: list[str] = Field(default_factory=list)
@@ -66,6 +119,60 @@ class ForensicReport(BaseModel):
     @classmethod
     def normalize_taxonomy(cls, value: str) -> str:
         return normalize_snake_key(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_serial_decoding(cls, data):
+        if not isinstance(data, dict):
+            return data
+        attrs = dict(data.get("key_attributes") or {})
+        sd = data.get("serial_decoding")
+        if isinstance(sd, dict):
+            for key in SERIAL_DECODING_FIELD_KEYS:
+                val = sd.get(key)
+                if val is not None and str(val).strip():
+                    attrs[key] = str(val).strip()
+
+        has_flag = data.get("has_factory_serial")
+        if has_flag is None:
+            has_flag = bool(str(attrs.get("serial_number_raw") or "").strip())
+        if not has_flag:
+            has_flag = any(str(attrs.get(k) or "").strip() for k in SERIAL_DECODING_FIELD_KEYS[1:])
+        data["has_factory_serial"] = bool(has_flag)
+
+        if has_flag and not data.get("serial_decoding"):
+            if all(str(attrs.get(k) or "").strip() for k in SERIAL_DECODING_FIELD_KEYS):
+                data["serial_decoding"] = {k: str(attrs[k]).strip() for k in SERIAL_DECODING_FIELD_KEYS}
+        data["key_attributes"] = attrs
+        return data
+
+    @model_validator(mode="after")
+    def require_serial_when_flagged(self) -> Self:
+        if self.has_factory_serial and self.serial_decoding is None:
+            raise ValueError(
+                "has_factory_serial=true exige serial_decoding con los cuatro campos de análisis pericial"
+            )
+        if self.serial_decoding is not None:
+            merged = dict(self.key_attributes)
+            for key, val in self.serial_decoding.model_dump().items():
+                merged[key] = val
+            object.__setattr__(self, "key_attributes", merged)
+        return self
+
+
+def serial_decoding_dict(report: ForensicReport | dict) -> dict[str, str]:
+    """Vista unificada de decodificación de serie (estructurada o legado en key_attributes)."""
+    if isinstance(report, ForensicReport):
+        if report.serial_decoding is not None:
+            return report.serial_decoding.model_dump()
+        data = report.key_attributes or {}
+    else:
+        forensic = report or {}
+        sd = forensic.get("serial_decoding")
+        if isinstance(sd, dict):
+            return {k: str(sd.get(k) or "").strip() for k in SERIAL_DECODING_FIELD_KEYS}
+        data = forensic.get("key_attributes") or {}
+    return {k: str(data.get(k) or "").strip() for k in SERIAL_DECODING_FIELD_KEYS}
 
 
 class TaxonomyGuess(BaseModel):

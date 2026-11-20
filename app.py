@@ -96,6 +96,20 @@ from ui.blueprints import (
     _plain_language_measurement_guide,
     estimate_carats_from_mm,
 )
+from ui.detail_discipline import (
+    render_gemology_calculator,
+    render_logistics_arbitrage_report,
+    render_physical_metrology_block,
+)
+from utils.discipline import (
+    format_gemology_status_line,
+    is_jewelry_or_gemology,
+    resolve_discipline_label,
+    resolve_materials_label,
+    serial_decoding_ficha_rows,
+    spec_value_is_present,
+)
+from utils.markdown_format import renumber_markdown_headers
 from utils.parsers import (
     _auto_seed_gemology_from_dictamen,
     _choice_options,
@@ -367,6 +381,7 @@ def _index_case_embedding_safe(case_id: str, metadata: dict, dictamen_text: str)
 
 
 def _finalize_cloud_case(case_id: str, metadata: dict, dictamen_text: str, image_sources: list | None = None):
+    dictamen_text = renumber_markdown_headers(dictamen_text or "")
     sources = image_sources if image_sources is not None else _persist_sources_from_metadata(case_id, metadata)
     saved = persist_cloud_case(case_id, metadata, dictamen_text, sources)
     _index_case_embedding_safe(case_id, metadata, dictamen_text)
@@ -676,7 +691,7 @@ def persist_gemology(case_id: str, block: dict, dictamen_text: str) -> str:
     block["_user_saved"] = True
     stored["gemology_data"] = block
     section = dictamen_section(block, block.get("valuation") or {})
-    updated = upsert_dictamen(dictamen_text, section)
+    updated = renumber_markdown_headers(upsert_dictamen(dictamen_text, section))
     stored["dictamen_text"] = updated
     if case_id in _DRAFT_CASES:
         _DRAFT_CASES[case_id] = stored
@@ -1111,7 +1126,9 @@ def index_page():
                                 JEWELRY_RIGOR_INSTRUCTIONS,
                             )
                             investigation = await run.io_bound(council_fn)
-                            dictamen_text = investigation.get("dictamen_text", "")
+                            dictamen_text = renumber_markdown_headers(
+                                investigation.get("dictamen_text", "")
+                            )
                             draft_extras = investigation.get("draft_extras") or {}
                             if str(dictamen_text).startswith("[ERR"):
                                 ui.notify(str(dictamen_text), type="negative")
@@ -1311,13 +1328,23 @@ def index_page():
         evidence_paths = list(case_metadata.get("evidence_urls") or [])
         if not evidence_paths and case_metadata.get("image_path"):
             evidence_paths = [case_metadata["image_path"]]
-        dictamen_text = case_metadata.get("dictamen_text") or "No se ha encontrado el contenido del dictamen."
+        dictamen_text = renumber_markdown_headers(
+            case_metadata.get("dictamen_text") or "No se ha encontrado el contenido del dictamen."
+        )
 
         maker, real_title = _extract_product_identity_from_dictamen(dictamen_text, case_metadata)
         val_info = _extract_true_market_valuation(dictamen_text, case_metadata)
         price_banner = val_info["display"]
 
-        seeded_gem = _auto_seed_gemology_from_dictamen(dictamen_text, ficha.get("gemology_data"))
+        base_gem = normalize_gemology_data(ficha.get("gemology_data"))
+        discipline_ctx = {**case_metadata, "dictamen_text": dictamen_text, "gemology_data": base_gem}
+        show_jewelry_ui = is_jewelry_or_gemology(discipline_ctx)
+        if show_jewelry_ui:
+            seeded_gem = _auto_seed_gemology_from_dictamen(dictamen_text, base_gem)
+        else:
+            seeded_gem = base_gem
+            if not seeded_gem.get("_user_saved"):
+                seeded_gem["applies"] = False
 
         render_top_bar(f"REF // {case_id}")
 
@@ -1464,7 +1491,7 @@ def index_page():
             tabs_def = [
                 ("sintesis", "I · SÍNTESIS & PLANO TÉCNICO CAD"),
                 ("mercado", "II · TASACIÓN & BUYER SEARCH"),
-                ("herramientas", "III · GEMOLOGÍA ACTIVA & LOGÍSTICA"),
+                ("herramientas", "III · LOGÍSTICA & ARBITRAJE"),
                 ("forense", "IV · DOSSIER TÉCNICO COMPLETO"),
             ]
             for t_key, t_label in tabs_def:
@@ -1478,176 +1505,218 @@ def index_page():
             if active_tab == "sintesis":
                 with ui.row().classes("w-full grid grid-cols-1 lg:grid-cols-12 gap-10 items-start"):
                     with ui.column().classes("lg:col-span-5 w-full gap-5"):
-                        ui.html("<span class='micro-coord'>01 // FICHA TÉCNICA RESUMIDA</span>")
-                        gem_status_str = (
-                            f"Activa ({seeded_gem['gem']['species']})"
-                            if seeded_gem.get("applies") else "No aplica"
-                        )
+                        ui.html("<span class='micro-coord'>/// FICHA TÉCNICA RESUMIDA</span>")
                         rows_list = [
                             ("Marca / Casa", maker),
                             ("Objeto", real_title),
-                            ("Gemología", gem_status_str),
-                            ("Liquidación", val_info["wholesale"]),
-                            ("Subasta", val_info["auction"]),
-                            ("Mercado Minorista", val_info["retail"]),
-                        ] + findings
+                        ]
+                        if show_jewelry_ui:
+                            gem_line = format_gemology_status_line(seeded_gem)
+                            if spec_value_is_present(gem_line):
+                                rows_list.append(("Gemología", gem_line))
+                        else:
+                            disc = resolve_discipline_label(discipline_ctx)
+                            mats = resolve_materials_label(discipline_ctx)
+                            if spec_value_is_present(disc):
+                                rows_list.append(("Disciplina", disc))
+                            if spec_value_is_present(mats):
+                                rows_list.append(("Materiales", mats))
+                        for lbl, val in serial_decoding_ficha_rows(discipline_ctx):
+                            rows_list.append((lbl, val))
+                        for lbl, val in [
+                            ("Liquidación", val_info.get("wholesale")),
+                            ("Subasta", val_info.get("auction")),
+                            ("Mercado Minorista", val_info.get("retail")),
+                        ]:
+                            if spec_value_is_present(val):
+                                rows_list.append((lbl, val))
+                        for lbl, val in findings:
+                            if spec_value_is_present(val):
+                                rows_list.append((lbl, val))
                         rows_html = "".join(
-                            f"<div class='spec-row'><span class='spec-label'>{html.escape(lbl)}</span><span class='spec-value'>{html.escape(val)}</span></div>"
+                            f"<div class='spec-row'><span class='spec-label'>{html.escape(lbl)}</span><span class='spec-value'>{html.escape(str(val))}</span></div>"
                             for lbl, val in rows_list
+                            if spec_value_is_present(val)
                         )
                         ui.html(f"<div class='spec-table'>{rows_html}</div>")
 
                         # ==========================================================
                         # PLIEGO TÉCNICO CAD INTERACTIVO (CAMBIA EL DIBUJO EN VIVO SEGÚN ANILLO Y ENGASTE)
                         # ==========================================================
-                        saved_cad = _infer_cad_defaults_from_dictamen(dictamen_text, case_metadata.get("cad_blueprint") or {})
+                        saved_cad = (
+                            _infer_cad_defaults_from_dictamen(
+                                dictamen_text,
+                                case_metadata.get("cad_blueprint") or {},
+                            )
+                            if show_jewelry_ui
+                            else dict(case_metadata.get("cad_blueprint") or {})
+                        )
                         with ui.column().classes("human-evidence-box w-full gap-3"):
-                            ui.html("<span class='micro-coord text-[#141413]'>02 // PLANO TÉCNICO INTERACTIVO (EL GRÁFICO CAMBIA SEGÚN ESTILO Y ENGASTE)</span>")
-
-                            cad_type = ui.select(
-                                JEWELRY_TYPES,
-                                value=saved_cad.get("jewelry_type", "Anillo / Sortija"),
-                                label="1. Tipología de pieza"
-                            ).classes("w-full")
-
-                            with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-3"):
-                                cad_shank = ui.select(
-                                    RING_SHANK_PROFILES,
-                                    value=saved_cad.get("shank_profile", RING_SHANK_PROFILES[0]),
-                                    label="2. Estilo de Anillo / Banda"
-                                ).classes("w-full")
-                                cad_setting = ui.select(
-                                    SETTING_ARCHITECTURES,
-                                    value=saved_cad.get("setting_arch", SETTING_ARCHITECTURES[0]),
-                                    label="3. Tipo de Engaste (ver dibujo III)"
-                                ).classes("w-full")
-
-                            # Contenedor del Plano SVG dinámico + guía en lenguaje llano
-                            blueprint_slot = ui.column().classes("w-full gap-1")
-
-                            ui.html("<span class='micro-coord mt-1'>COTAS DE MONTURA Y METAL (SEGÚN EL PLANO SUPERIOR)</span>")
-                            with ui.row().classes("w-full grid grid-cols-2 sm:grid-cols-3 gap-2"):
-                                cad_weight = ui.input(label="Peso total (g)", value=str(saved_cad.get("weight_g", "")), placeholder="Ej. 5.4").classes("w-full")
-                                cad_a = ui.input(label="Cota A: Ø Int (mm)", value=str(saved_cad.get("cota_a_mm", "")), placeholder="Ej. 17.2").classes("w-full")
-                                cad_b = ui.input(label="Cota B: Ancho Banda", value=str(saved_cad.get("cota_b_mm", "")), placeholder="Ej. 3.8").classes("w-full")
-                                cad_c = ui.input(label="Cota C: Espesor Aro", value=str(saved_cad.get("cota_c_mm", "")), placeholder="Ej. 1.6").classes("w-full")
-                                cad_d = ui.input(label="Cota D: Alt. Cabeza", value=str(saved_cad.get("cota_d_mm", "")), placeholder="Ej. 6.5").classes("w-full")
-
-                            # Cota E: Piedra Principal / Serie 1
-                            ui.html("<span class='micro-coord mt-2'>COTA E // PIEDRA PRINCIPAL O SERIE 1 (EJ. ESMERALDAS)</span>")
-                            with ui.row().classes("w-full grid grid-cols-3 gap-2"):
-                                c_species = ui.select(list(SPECIES_DENSITY_MULTIPLIER.keys()), value=saved_cad.get("central_species", "Esmeralda"), label="Especie").classes("w-full")
-                                c_cut = ui.select(GEM_CUT_CATALOG, value=saved_cad.get("central_cut", "Esmeralda / Octogonal"), label="Corte / Talla").classes("w-full")
-                                c_count = ui.number(label="Cantidad", value=int(saved_cad.get("central_count", 1)), min=0, step=1).classes("w-full")
-                            with ui.row().classes("w-full grid grid-cols-3 gap-2"):
-                                c_l = ui.number(label="Largo (mm)", value=float(saved_cad.get("central_l_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
-                                c_w = ui.number(label="Ancho (mm)", value=float(saved_cad.get("central_w_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
-                                c_d = ui.number(label="Prof. (mm)", value=float(saved_cad.get("central_d_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
-
-                            # Cota F: Piedras Secundarias / Hombros / Serie 2
-                            ui.html("<span class='micro-coord mt-2'>COTA F // PIEDRAS SECUNDARIAS / HOMBROS / SERIE 2 (EJ. DIAMANTES)</span>")
-                            with ui.row().classes("w-full grid grid-cols-3 gap-2"):
-                                s_species = ui.select(list(SPECIES_DENSITY_MULTIPLIER.keys()), value=saved_cad.get("side_species", "Diamante"), label="Especie").classes("w-full")
-                                s_cut = ui.select(GEM_CUT_CATALOG, value=saved_cad.get("side_cut", "Brillante Redondo"), label="Corte / Talla").classes("w-full")
-                                s_count = ui.number(label="Cantidad real", value=int(saved_cad.get("side_count", 0)), min=0, step=1).classes("w-full")
-                            with ui.row().classes("w-full grid grid-cols-2 gap-2"):
-                                s_l = ui.number(label="Largo / Ø (mm)", value=float(saved_cad.get("side_l_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
-                                s_w = ui.number(label="Ancho (mm)", value=float(saved_cad.get("side_w_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
-
-                            carat_preview = ui.label("").classes("micro-coord text-[#141413] mt-1")
-
-                            def refresh_cad_visuals():
-                                blueprint_slot.clear()
-                                total_ring_stones = int(c_count.value or 0) + int(s_count.value or 0)
-                                with blueprint_slot:
-                                    ui.html(
-                                        _dynamic_blueprint_svg_html(
-                                            cad_type.value,
-                                            cad_shank.value,
-                                            cad_setting.value,
-                                            c_cut.value,
-                                            s_cut.value,
-                                            total_ring_stones if "alianza" in (cad_shank.value or "").lower() else int(s_count.value or 0),
-                                        )
-                                    )
-                                    guide_txt = _plain_language_measurement_guide(cad_shank.value, cad_setting.value)
-                                    ui.html(f"<p class='text-[11px] text-[#625E57] leading-snug m-0 px-1'>💡 <strong>Guía visual:</strong> {html.escape(guide_txt)}</p>")
-
-                                ct_c = estimate_carats_from_mm(c_species.value, c_cut.value, int(c_count.value or 0), float(c_l.value or 0), float(c_w.value or 0), float(c_d.value or 0))
-                                ct_s = estimate_carats_from_mm(s_species.value, s_cut.value, int(s_count.value or 0), float(s_l.value or 0), float(s_w.value or 0), 0.0)
-                                tot = round(ct_c + ct_s, 3)
-                                carat_preview.text = f"QUILATAJE GEOMÉTRICO CALCULADO: SERIE 1 ({ct_c} CT) + SERIE 2 ({ct_s} CT) = TOTAL {tot} CT"
-
-                            for ctrl in (cad_type, cad_shank, cad_setting, c_species, c_cut, c_count, c_l, c_w, c_d, s_species, s_cut, s_count, s_l, s_w):
-                                ctrl.on_value_change(lambda _: refresh_cad_visuals())
-                            refresh_cad_visuals()
-
-                            cad_hyp = ui.select(
-                                [
-                                    "Evaluar Ambas Hipótesis (Gema Natural vs. Sintética)",
-                                    "Confirmado en joyería: Gemas Naturales",
-                                    "Confirmado en joyería: Sintéticas / Simulantes",
-                                    "Pendiente de checkeo en joyería",
-                                ],
-                                value=saved_cad.get("gem_hypothesis", "Evaluar Ambas Hipótesis (Gema Natural vs. Sintética)"),
-                                label="Hipótesis / Resultado de Checkeo"
-                            ).classes("w-full")
-
-                            cad_obs = ui.input(
-                                label="Notas adicionales de taller / cuños",
-                                value=saved_cad.get("extra_observations", ""),
-                                placeholder="Ej. 7 esmeraldas y 5 diamantes verificados en mano..."
-                            ).classes("w-full")
-
-                            cad_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
-
-                            async def apply_cad_blueprint():
-                                ct_c = estimate_carats_from_mm(c_species.value, c_cut.value, int(c_count.value or 0), float(c_l.value or 0), float(c_w.value or 0), float(c_d.value or 0))
-                                ct_s = estimate_carats_from_mm(s_species.value, s_cut.value, int(s_count.value or 0), float(s_l.value or 0), float(s_w.value or 0), 0.0)
-                                cad_payload = {
-                                    "jewelry_type": cad_type.value,
-                                    "shank_profile": cad_shank.value,
-                                    "setting_arch": cad_setting.value,
-                                    "weight_g": (cad_weight.value or "").strip(),
-                                    "cota_a_mm": (cad_a.value or "").strip(),
-                                    "cota_b_mm": (cad_b.value or "").strip(),
-                                    "cota_c_mm": (cad_c.value or "").strip(),
-                                    "cota_d_mm": (cad_d.value or "").strip(),
-                                    "central_species": c_species.value,
-                                    "central_cut": c_cut.value,
-                                    "central_count": int(c_count.value or 0),
-                                    "central_l_mm": float(c_l.value or 0),
-                                    "central_w_mm": float(c_w.value or 0),
-                                    "central_d_mm": float(c_d.value or 0),
-                                    "central_ct": ct_c,
-                                    "side_species": s_species.value,
-                                    "side_cut": s_cut.value,
-                                    "side_count": int(s_count.value or 0),
-                                    "side_l_mm": float(s_l.value or 0),
-                                    "side_w_mm": float(s_w.value or 0),
-                                    "side_ct": ct_s,
-                                    "total_ct": round(ct_c + ct_s, 3),
-                                    "gem_hypothesis": cad_hyp.value,
-                                    "extra_observations": (cad_obs.value or "").strip(),
-                                }
-                                cad_status.text = "⏳ RECALCULANDO DICTAMEN CON PLIEGO TÉCNICO CAD EN SEGUNDO PLANO..."
-                                cad_status.classes(remove="hidden")
-                                updated_md = await run.io_bound(
-                                    save_cad_blueprint_and_recalculate,
-                                    case_id,
-                                    folder_path,
-                                    case_metadata,
-                                    cad_payload,
+                            if not show_jewelry_ui:
+                                render_physical_metrology_block(discipline_ctx)
+                            elif show_jewelry_ui:
+                                ui.html(
+                                    "<span class='micro-coord text-[#141413]'>"
+                                    "/// PLANO TÉCNICO INTERACTIVO"
+                                    "</span>"
                                 )
-                                state["last_dictamen"] = updated_md
-                                ui.notify("Tasación recalculada con las cotas CAD y el conteo real de piedras", type="positive")
-                                refresh_ui()
 
-                            if can_save_expedient():
-                                editorial_button("RECALCULAR CON COTAS CAD Y GEMAS", on_click=apply_cad_blueprint)
+                            if show_jewelry_ui:
+                                cad_type = ui.select(
+                                    JEWELRY_TYPES,
+                                    value=saved_cad.get("jewelry_type", "Anillo / Sortija"),
+                                    label="1. Tipología de pieza",
+                                ).classes("w-full")
+
+                                with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-3"):
+                                    cad_shank = ui.select(
+                                        RING_SHANK_PROFILES,
+                                        value=saved_cad.get("shank_profile", RING_SHANK_PROFILES[0]),
+                                        label="2. Estilo de Anillo / Banda"
+                                    ).classes("w-full")
+                                    cad_setting = ui.select(
+                                        SETTING_ARCHITECTURES,
+                                        value=saved_cad.get("setting_arch", SETTING_ARCHITECTURES[0]),
+                                        label="3. Tipo de Engaste (ver dibujo III)"
+                                    ).classes("w-full")
+
+                                # Contenedor del Plano SVG dinámico + guía en lenguaje llano
+                                blueprint_slot = ui.column().classes("w-full gap-1")
+
+                                ui.html("<span class='micro-coord mt-1'>COTAS DE MONTURA Y METAL (SEGÚN EL PLANO SUPERIOR)</span>")
+                                with ui.row().classes("w-full grid grid-cols-2 sm:grid-cols-3 gap-2"):
+                                    cad_weight = ui.input(label="Peso total (g)", value=str(saved_cad.get("weight_g", "")), placeholder="Ej. 5.4").classes("w-full")
+                                    cad_a = ui.input(label="Cota A: Ø Int (mm)", value=str(saved_cad.get("cota_a_mm", "")), placeholder="Ej. 17.2").classes("w-full")
+                                    cad_b = ui.input(label="Cota B: Ancho Banda", value=str(saved_cad.get("cota_b_mm", "")), placeholder="Ej. 3.8").classes("w-full")
+                                    cad_c = ui.input(label="Cota C: Espesor Aro", value=str(saved_cad.get("cota_c_mm", "")), placeholder="Ej. 1.6").classes("w-full")
+                                    cad_d = ui.input(label="Cota D: Alt. Cabeza", value=str(saved_cad.get("cota_d_mm", "")), placeholder="Ej. 6.5").classes("w-full")
+
+                                # Cota E: Piedra Principal / Serie 1
+                                ui.html("<span class='micro-coord mt-2'>COTA E // PIEDRA PRINCIPAL O SERIE 1 (EJ. ESMERALDAS)</span>")
+                                with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+                                    c_species = ui.select(list(SPECIES_DENSITY_MULTIPLIER.keys()), value=saved_cad.get("central_species", "Esmeralda"), label="Especie").classes("w-full")
+                                    c_cut = ui.select(GEM_CUT_CATALOG, value=saved_cad.get("central_cut", "Esmeralda / Octogonal"), label="Corte / Talla").classes("w-full")
+                                    c_count = ui.number(label="Cantidad", value=int(saved_cad.get("central_count", 1)), min=0, step=1).classes("w-full")
+                                with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+                                    c_l = ui.number(label="Largo (mm)", value=float(saved_cad.get("central_l_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+                                    c_w = ui.number(label="Ancho (mm)", value=float(saved_cad.get("central_w_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+                                    c_d = ui.number(label="Prof. (mm)", value=float(saved_cad.get("central_d_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+
+                                # Cota F: Piedras Secundarias / Hombros / Serie 2
+                                ui.html("<span class='micro-coord mt-2'>COTA F // PIEDRAS SECUNDARIAS / HOMBROS / SERIE 2 (EJ. DIAMANTES)</span>")
+                                with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+                                    s_species = ui.select(list(SPECIES_DENSITY_MULTIPLIER.keys()), value=saved_cad.get("side_species", "Diamante"), label="Especie").classes("w-full")
+                                    s_cut = ui.select(GEM_CUT_CATALOG, value=saved_cad.get("side_cut", "Brillante Redondo"), label="Corte / Talla").classes("w-full")
+                                    s_count = ui.number(label="Cantidad real", value=int(saved_cad.get("side_count", 0)), min=0, step=1).classes("w-full")
+                                with ui.row().classes("w-full grid grid-cols-2 gap-2"):
+                                    s_l = ui.number(label="Largo / Ø (mm)", value=float(saved_cad.get("side_l_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+                                    s_w = ui.number(label="Ancho (mm)", value=float(saved_cad.get("side_w_mm", 0.0)), min=0.0, step=0.1).classes("w-full")
+
+                                carat_preview = ui.label("").classes("micro-coord text-[#141413] mt-1")
+
+                                def refresh_cad_visuals():
+                                    blueprint_slot.clear()
+                                    total_ring_stones = int(c_count.value or 0) + int(s_count.value or 0)
+                                    with blueprint_slot:
+                                        ui.html(
+                                            _dynamic_blueprint_svg_html(
+                                                cad_type.value,
+                                                cad_shank.value,
+                                                cad_setting.value,
+                                                c_cut.value,
+                                                s_cut.value,
+                                                total_ring_stones if "alianza" in (cad_shank.value or "").lower() else int(s_count.value or 0),
+                                            )
+                                        )
+                                        guide_txt = _plain_language_measurement_guide(cad_shank.value, cad_setting.value)
+                                        ui.html(f"<p class='text-[11px] text-[#625E57] leading-snug m-0 px-1'>💡 <strong>Guía visual:</strong> {html.escape(guide_txt)}</p>")
+
+                                    ct_c = estimate_carats_from_mm(c_species.value, c_cut.value, int(c_count.value or 0), float(c_l.value or 0), float(c_w.value or 0), float(c_d.value or 0))
+                                    ct_s = estimate_carats_from_mm(s_species.value, s_cut.value, int(s_count.value or 0), float(s_l.value or 0), float(s_w.value or 0), 0.0)
+                                    tot = round(ct_c + ct_s, 3)
+                                    carat_preview.text = f"QUILATAJE GEOMÉTRICO CALCULADO: SERIE 1 ({ct_c} CT) + SERIE 2 ({ct_s} CT) = TOTAL {tot} CT"
+
+                                for ctrl in (cad_type, cad_shank, cad_setting, c_species, c_cut, c_count, c_l, c_w, c_d, s_species, s_cut, s_count, s_l, s_w):
+                                    ctrl.on_value_change(lambda _: refresh_cad_visuals())
+                                refresh_cad_visuals()
+
+                                cad_hyp = ui.select(
+                                    [
+                                        "Evaluar Ambas Hipótesis (Gema Natural vs. Sintética)",
+                                        "Confirmado en joyería: Gemas Naturales",
+                                        "Confirmado en joyería: Sintéticas / Simulantes",
+                                        "Pendiente de checkeo en joyería",
+                                    ],
+                                    value=saved_cad.get("gem_hypothesis", "Evaluar Ambas Hipótesis (Gema Natural vs. Sintética)"),
+                                    label="Hipótesis / Resultado de Checkeo"
+                                ).classes("w-full")
+
+                                cad_obs = ui.input(
+                                    label="Notas adicionales de taller / cuños",
+                                    value=saved_cad.get("extra_observations", ""),
+                                    placeholder="Ej. 7 esmeraldas y 5 diamantes verificados en mano..."
+                                ).classes("w-full")
+
+                                cad_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+
+                                async def apply_cad_blueprint():
+                                    ct_c = estimate_carats_from_mm(c_species.value, c_cut.value, int(c_count.value or 0), float(c_l.value or 0), float(c_w.value or 0), float(c_d.value or 0))
+                                    ct_s = estimate_carats_from_mm(s_species.value, s_cut.value, int(s_count.value or 0), float(s_l.value or 0), float(s_w.value or 0), 0.0)
+                                    cad_payload = {
+                                        "jewelry_type": cad_type.value,
+                                        "shank_profile": cad_shank.value,
+                                        "setting_arch": cad_setting.value,
+                                        "weight_g": (cad_weight.value or "").strip(),
+                                        "cota_a_mm": (cad_a.value or "").strip(),
+                                        "cota_b_mm": (cad_b.value or "").strip(),
+                                        "cota_c_mm": (cad_c.value or "").strip(),
+                                        "cota_d_mm": (cad_d.value or "").strip(),
+                                        "central_species": c_species.value,
+                                        "central_cut": c_cut.value,
+                                        "central_count": int(c_count.value or 0),
+                                        "central_l_mm": float(c_l.value or 0),
+                                        "central_w_mm": float(c_w.value or 0),
+                                        "central_d_mm": float(c_d.value or 0),
+                                        "central_ct": ct_c,
+                                        "side_species": s_species.value,
+                                        "side_cut": s_cut.value,
+                                        "side_count": int(s_count.value or 0),
+                                        "side_l_mm": float(s_l.value or 0),
+                                        "side_w_mm": float(s_w.value or 0),
+                                        "side_ct": ct_s,
+                                        "total_ct": round(ct_c + ct_s, 3),
+                                        "gem_hypothesis": cad_hyp.value,
+                                        "extra_observations": (cad_obs.value or "").strip(),
+                                    }
+                                    cad_status.text = "⏳ RECALCULANDO DICTAMEN CON PLIEGO TÉCNICO CAD EN SEGUNDO PLANO..."
+                                    cad_status.classes(remove="hidden")
+                                    updated_md = await run.io_bound(
+                                        save_cad_blueprint_and_recalculate,
+                                        case_id,
+                                        folder_path,
+                                        case_metadata,
+                                        cad_payload,
+                                    )
+                                    state["last_dictamen"] = updated_md
+                                    ui.notify("Tasación recalculada con las cotas CAD y el conteo real de piedras", type="positive")
+                                    refresh_ui()
+
+                                if can_save_expedient():
+                                    editorial_button("RECALCULAR CON COTAS CAD Y GEMAS", on_click=apply_cad_blueprint)
+
+                            if show_jewelry_ui:
+                                render_gemology_calculator(
+                                    case_id=case_id,
+                                    dictamen_text=dictamen_text,
+                                    seeded_gem=seeded_gem,
+                                    can_save=can_save_expedient(),
+                                    spot_prices=market_engine.get_metal_spot_prices,
+                                    on_persist=persist_gemology,
+                                    on_after_save=refresh_ui,
+                                )
 
                         if pending_q and can_save_expedient():
-                            ui.html("<span class='micro-coord mt-2'>03 // RECOMENDACIONES DE CHECKEO Y DATOS PENDIENTES</span>")
+                            ui.html("<span class='micro-coord mt-2'>/// RECOMENDACIONES Y ALERTAS</span>")
                             ans_widgets = {}
                             files_mem = {}
                             for idx, question in enumerate(pending_q):
@@ -1750,159 +1819,10 @@ def index_page():
                 ui.markdown(categorized["mercado"]).classes("editorial-reader w-full")
 
             elif active_tab == "herramientas":
-                with ui.row().classes("w-full grid grid-cols-1 lg:grid-cols-12 gap-10 items-start"):
-                    with ui.column().classes("lg:col-span-6 w-full gap-4"):
-                        ui.html("<span class='micro-coord'>01 // GEMOLOGÍA Y METALES PRECIOSOS (AUTO-DETECTADA)</span>")
-                        gem_state = {
-                            "applies": bool(seeded_gem["applies"]),
-                            "subject": seeded_gem["subject"],
-                            "metal_kind": seeded_gem["metal"]["kind"],
-                            "metal_grams": float(seeded_gem["metal"]["grams"] or 0.0),
-                            "authorship": seeded_gem["authorship"],
-                            "setting": seeded_gem["setting"],
-                            "gem": dict(seeded_gem["gem"]),
-                            "pearl": dict(seeded_gem["pearl"]),
-                        }
-
-                        gem_container = ui.column().classes("w-full gap-3")
-
-                        def render_gem_controls():
-                            gem_container.clear()
-                            with gem_container:
-                                applies_cb = ui.checkbox("La pieza incorpora gemas o perlas", value=gem_state["applies"]).props("color=dark")
-                                applies_cb.on_value_change(lambda e: (gem_state.update({"applies": e.value}), render_gem_controls()))
-
-                                if gem_state["applies"]:
-                                    subj_radio = ui.radio(SUBJECTS, value=gem_state["subject"]).props("inline dense color=dark")
-                                    subj_radio.on_value_change(lambda e: (gem_state.update({"subject": e.value}), render_gem_controls()))
-
-                                    with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-4"):
-                                        ui.select(METALS, value=gem_state["metal_kind"], label="Metal base").on_value_change(lambda e: (gem_state.update({"metal_kind": e.value}), render_gem_controls())).classes("w-full")
-                                        ui.number(label="Gramos de metal", value=gem_state["metal_grams"], min=0.0, step=0.1).on_value_change(lambda e: (gem_state.update({"metal_grams": float(e.value or 0.0)}), render_gem_controls())).classes("w-full")
-                                        ui.select(AUTHORSHIPS, value=gem_state["authorship"], label="Autoría o taller").on_value_change(lambda e: (gem_state.update({"authorship": e.value}), render_gem_controls())).classes("w-full")
-                                        ui.select(SETTINGS, value=gem_state["setting"], label="Engaste").on_value_change(lambda e: (gem_state.update({"setting": e.value}), render_gem_controls())).classes("w-full")
-
-                                    if gem_state["subject"] in ("Gema", "Gema y perla"):
-                                        ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE GEMA (QUILATES TOTALES ESTIMADOS O MEDIDOS)</span>")
-                                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
-                                            ui.select(GEM_SPECIES, value=gem_state["gem"]["species"], label="Especie").on_value_change(lambda e: (gem_state["gem"].update({"species": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.number(label="Quilates Totales (ct)", value=float(gem_state["gem"]["carat"] or 0), min=0.0, step=0.05).on_value_change(lambda e: (gem_state["gem"].update({"carat": float(e.value or 0)}), render_gem_controls())).classes("w-full")
-                                            ui.select(GEM_COLORS, value=gem_state["gem"]["color"], label="Color").on_value_change(lambda e: (gem_state["gem"].update({"color": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.select(GEM_CLARITIES, value=gem_state["gem"]["clarity"], label="Pureza").on_value_change(lambda e: (gem_state["gem"].update({"clarity": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.select(GEM_CUTS, value=gem_state["gem"]["cut"], label="Talla").on_value_change(lambda e: (gem_state["gem"].update({"cut": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.select(GEM_NATURES, value=gem_state["gem"]["nature"], label="Naturaleza").on_value_change(lambda e: (gem_state["gem"].update({"nature": e.value}), render_gem_controls())).classes("w-full")
-
-                                    if gem_state["subject"] in ("Perla", "Gema y perla"):
-                                        ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE PERLA</span>")
-                                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
-                                            ui.select(PEARL_NATURES, value=gem_state["pearl"]["nature"], label="Naturaleza").on_value_change(lambda e: (gem_state["pearl"].update({"nature": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.number(label="Número de perlas", value=int(gem_state["pearl"]["count"] or 0), min=0, step=1).on_value_change(lambda e: (gem_state["pearl"].update({"count": int(e.value or 0)}), render_gem_controls())).classes("w-full")
-                                            ui.select(PEARL_LUSTER, value=gem_state["pearl"]["luster"], label="Lustre").on_value_change(lambda e: (gem_state["pearl"].update({"luster": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.select(PEARL_NACRE, value=gem_state["pearl"]["nacre"], label="Nácar").on_value_change(lambda e: (gem_state["pearl"].update({"nacre": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.select(PEARL_SURFACE, value=gem_state["pearl"]["surface"], label="Superficie").on_value_change(lambda e: (gem_state["pearl"].update({"surface": e.value}), render_gem_controls())).classes("w-full")
-                                            ui.select(PEARL_MATCHING, value=gem_state["pearl"]["matching"], label="Matching").on_value_change(lambda e: (gem_state["pearl"].update({"matching": e.value}), render_gem_controls())).classes("w-full")
-
-                                payload = {
-                                    "applies": gem_state["applies"],
-                                    "subject": gem_state["subject"],
-                                    "gem": gem_state["gem"],
-                                    "pearl": gem_state["pearl"],
-                                    "setting": gem_state["setting"],
-                                    "authorship": gem_state["authorship"],
-                                    "metal": {"kind": gem_state["metal_kind"], "grams": gem_state["metal_grams"]},
-                                }
-                                spot = market_engine.get_metal_spot_prices()
-                                valuation = value_piece(payload, spot)
-                                payload["valuation"] = valuation
-
-                                if gem_state["applies"]:
-                                    metal_val = "Introduzca gramos arriba para calcular metal" if valuation["metal_pending"] else format_gem_eur(valuation["metal_eur"])
-                                    ui.html(
-                                        "<div class='spec-table my-2'>"
-                                        f"<div class='spec-row'><span class='spec-label'>Metal Base</span><span class='spec-value'>{metal_val}</span></div>"
-                                        f"<div class='spec-row'><span class='spec-label'>Valor Gema / Perla</span><span class='spec-value'>{format_gem_eur(valuation['gem_eur'])} · {format_gem_eur(valuation['pearl_eur'])}</span></div>"
-                                        f"<div class='spec-row'><span class='spec-label'>Prima Autoría</span><span class='spec-value'>{format_gem_eur(valuation['authorship_eur'])}</span></div>"
-                                        f"<div class='spec-row'><span class='spec-label'>Tasación Gemológica</span><span class='spec-value'>{format_gem_eur(valuation['piece_eur'])}</span></div>"
-                                        "</div>"
-                                    )
-
-                                def save_gem():
-                                    persist_gemology(case_id, payload, dictamen_text)
-                                    ui.notify("Gemología guardada y fijada como tasación de la pieza", type="positive")
-                                    refresh_ui()
-
-                                if can_save_expedient():
-                                    editorial_button(
-                                        "FIJAR ESTA TASACIÓN GEMOLÓGICA EN LA FICHA",
-                                        on_click=save_gem,
-                                    )
-
-                        render_gem_controls()
-
-                    with ui.column().classes("lg:col-span-6 w-full gap-4"):
-                        ui.html("<span class='micro-coord'>02 // INTELIGENCIA LOGÍSTICA Y ARANCELARIA</span>")
-                        block = ficha.get("logistics_intelligence") or {}
-                        origin = block.get("origin_location") or {}
-                        true_eur = val_info["mid_eur"]
-                        cities = list(ORIGIN_GAZETTEER) + [CUSTOM_CITY_OPTION]
-                        saved_city = origin.get("city") or ""
-                        known_names = {fold_place_name(name): name for name in ORIGIN_GAZETTEER}
-                        current_city = known_names.get(fold_place_name(saved_city), CUSTOM_CITY_OPTION if saved_city else cities[0])
-
-                        with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-12 gap-4 items-end"):
-                            city_select = ui.select(cities, value=current_city, label="Origen del hallazgo").classes("sm:col-span-7 w-full")
-                            custom_city_in = ui.input(
-                                label="Ciudad o mercado",
-                                value="" if fold_place_name(saved_city) in known_names else saved_city,
-                                placeholder="Ej. Dubái, Hong Kong, Singapur"
-                            ).classes("sm:col-span-5 w-full")
-                            custom_city_in.bind_visibility_from(city_select, "value", value=CUSTOM_CITY_OPTION)
-
-                        def calc_logistics():
-                            chosen = custom_city_in.value if city_select.value == CUSTOM_CITY_OPTION else city_select.value
-                            if not (chosen or "").strip():
-                                ui.notify("Escribe la ciudad o el mercado para calcular la viabilidad.", type="warning")
-                            elif true_eur is None:
-                                ui.notify("El dictamen no fija una tasación en euros.", type="warning")
-                            else:
-                                fresh = build_logistics_intelligence(chosen, true_eur)
-                                fresh["appraisal_basis"] = {
-                                    "eur": true_eur,
-                                    "label": val_info["display"],
-                                    "range_label": val_info["display"],
-                                }
-                                persist_logistics_intelligence(case_id, fresh)
-                                refresh_ui()
-
-                        if can_save_expedient():
-                            editorial_button("CALCULAR VIABILIDAD LOGÍSTICA", on_click=calc_logistics)
-
-                        if block and true_eur is not None:
-                            saved_origin = block.get("origin_location") or {}
-                            brief = logistics_brief(saved_origin, block.get("target_hubs") or [], true_eur)
-                            ui.html(
-                                "<div class='spec-table mt-2'>"
-                                f"<div class='spec-row'><span class='spec-label'>Estrategia</span><span class='spec-value'>{html.escape(brief['strategy'])}</span></div>"
-                                f"<div class='spec-row'><span class='spec-label'>Razonamiento</span><span class='spec-value'>{html.escape(brief['reason'])}</span></div>"
-                                f"<div class='spec-row'><span class='spec-label'>Base Aplicada</span><span class='spec-value'>{html.escape(saved_origin.get('city', '—'))} · {html.escape(val_info['display'])}</span></div>"
-                                "</div>"
-                            )
-                            with ui.expansion("DESGLOSE POR PLAZA COMERCIAL").classes("w-full border border-[#141413] p-2"):
-                                local_value = brief["rows"][0]["market_value_eur"] if brief["rows"] else true_eur
-                                for row in brief["rows"]:
-                                    if row["plaza"].startswith("Venta en origen"):
-                                        ui.markdown(f"**{row['plaza']}.** Base aplicada: {format_eur(row['market_value_eur'])}.")
-                                        continue
-                                    premium = row["market_value_eur"] - local_value
-                                    costs = row["insured_transport_eur"] + row["customs_eur"]
-                                    if costs > max(premium, 0):
-                                        ui.markdown(f"**{row['plaza']}.** La prima de plaza queda absorbida por el tránsito y el arancel.")
-                                    else:
-                                        ui.markdown(
-                                            f"**{row['plaza']}.** Valor {format_eur(row['market_value_eur'])}. "
-                                            f"Tránsito {format_eur(row['insured_transport_eur'])}. "
-                                            f"Arancel {format_eur(row['customs_eur'])}."
-                                        )
+                arb_report = case_metadata.get("logistics_arbitrage_report") or {}
+                with ui.column().classes("w-full gap-6 max-w-4xl"):
+                    ui.html("<span class='micro-coord'>INFORME DE ADUANAS, ARBITRAJE Y HUBS</span>")
+                    render_logistics_arbitrage_report(arb_report, val_info.get("display") or "—")
 
             elif active_tab == "forense":
                 ui.html("<span class='micro-coord'>DOSSIER PERICIAL COMPLETO (SIN DUPLICADOS, LECTURA CONTINUA)</span>")

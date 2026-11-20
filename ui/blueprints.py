@@ -75,6 +75,51 @@ def estimate_carats_from_mm(species: str, cut: str, count: int, length_mm: float
     return round(single_ct * count, 3)
 
 
+def _discipline_metrology_svg_html(
+    length_mm: float | None = None,
+    width_mm: float | None = None,
+    height_mm: float | None = None,
+    diameter_mm: float | None = None,
+    title: str = "",
+) -> str:
+    """Esquema de metrología genérica (no joyería) — caja técnica editorial."""
+    l = length_mm or 0
+    w = width_mm or 0
+    h = height_mm or 0
+    d = diameter_mm or 0
+    label = html.escape(title or "Metrología de pieza")
+    dim_txt = []
+    if l:
+        dim_txt.append(f"L={l:g} mm")
+    if w:
+        dim_txt.append(f"A={w:g} mm")
+    if h:
+        dim_txt.append(f"H={h:g} mm")
+    if d:
+        dim_txt.append(f"Ø={d:g} mm")
+    dims = " · ".join(dim_txt) if dim_txt else "Cotas pendientes de verificación en mano"
+    if d and not l:
+        return f"""
+        <svg viewBox="0 0 440 200" class="w-full max-w-lg" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="8" width="424" height="184" fill="#F3EFE6" stroke="#141413" stroke-width="1"/>
+            <text x="220" y="28" text-anchor="middle" font-size="9" font-family="Georgia, serif" fill="#141413">{label}</text>
+            <ellipse cx="220" cy="105" rx="68" ry="68" fill="#EAE4D7" stroke="#141413" stroke-width="1.2"/>
+            <line x1="152" y1="105" x2="288" y2="105" stroke="#8c6d28" stroke-width="0.8" stroke-dasharray="3 2"/>
+            <text x="220" y="100" text-anchor="middle" font-size="8" fill="#625E57">{html.escape(dims)}</text>
+        </svg>
+        """
+    return f"""
+    <svg viewBox="0 0 440 200" class="w-full max-w-lg" xmlns="http://www.w3.org/2000/svg">
+        <rect x="8" y="8" width="424" height="184" fill="#F3EFE6" stroke="#141413" stroke-width="1"/>
+        <text x="220" y="28" text-anchor="middle" font-size="9" font-family="Georgia, serif" fill="#141413">{label}</text>
+        <rect x="130" y="52" width="180" height="100" fill="#EAE4D7" stroke="#141413" stroke-width="1.2"/>
+        <line x1="130" y1="165" x2="310" y2="165" stroke="#8c6d28" stroke-width="0.8"/>
+        <line x1="115" y1="52" x2="115" y2="152" stroke="#8c6d28" stroke-width="0.8"/>
+        <text x="220" y="178" text-anchor="middle" font-size="8" fill="#625E57">{html.escape(dims)}</text>
+    </svg>
+    """
+
+
 def _infer_cad_defaults_from_dictamen(dictamen: str, saved_cad: dict) -> dict:
     """Detecta automáticamente en el texto del dictamen el estilo de anillo, engaste y corte para abrir el gráfico ya ajustado."""
     if saved_cad and saved_cad.get("shank_profile"):
