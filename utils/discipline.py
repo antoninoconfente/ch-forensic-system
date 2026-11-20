@@ -1,14 +1,89 @@
-"""Detección estricta de joyería/gemología vs. otras disciplinas."""
+"""Detección de joyería/gemología vs. otras disciplinas + override manual en UI."""
 
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from agents.schemas import normalize_snake_key
 from database.client import get_domain_rubric
 from src.research.gemology import GEM_SPECIES, normalize_gemology_data
 
 _GEM_KEYWORDS = re.compile(r"\b(gema[s]?|joya[s]?)\b", re.I)
+
+JEWELRY_UI_KEYWORDS: tuple[str, ...] = (
+    "anillo",
+    "sortija",
+    "collar",
+    "pulsera",
+    "joya",
+    "gema",
+    "diamante",
+    "oro",
+    "plata",
+    "platino",
+    "esmeralda",
+    "rubi",
+    "zafiro",
+    "colgante",
+    "pendiente",
+)
+
+_JEWELRY_KEYWORD_PATTERNS = tuple(
+    re.compile(
+        rf"(?<![\wáéíóúñü]){re.escape(kw)}(?![\wáéíóúñü])",
+        re.IGNORECASE,
+    )
+    for kw in JEWELRY_UI_KEYWORDS
+)
+
+
+def _fold_casefold(text: str) -> str:
+    folded = unicodedata.normalize("NFKD", str(text or ""))
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return folded.casefold()
+
+
+def _text_has_jewelry_keyword(text: str) -> bool:
+    norm = _fold_casefold(text)
+    if not norm.strip():
+        return False
+    return any(pat.search(norm) for pat in _JEWELRY_KEYWORD_PATTERNS)
+
+
+def _jewelry_keyword_detected(case_data: dict) -> bool:
+    """True si taxonomía, título u objetos/materials contienen palabras clave de joyería."""
+    case_data = case_data or {}
+    forensic = _safe_dict(case_data.get("forensic_report"))
+    chunks: list[str] = []
+
+    for domain in (explicit_parent_domain(case_data), resolve_parent_domain(case_data)):
+        if domain:
+            chunks.append(domain.replace("_", " "))
+
+    for key in ("taxonomy_key", "category_name", "technical_summary"):
+        val = forensic.get(key)
+        if val:
+            chunks.append(str(val))
+    chunks.append(str(case_data.get("domain_taxonomy") or ""))
+
+    for key in ("object_description", "custom_title", "object_name"):
+        val = case_data.get(key)
+        if val:
+            chunks.append(str(val))
+
+    materials = forensic.get("primary_materials") or forensic.get("materials") or []
+    if isinstance(materials, list):
+        chunks.extend(str(m) for m in materials if m)
+    elif materials:
+        chunks.append(str(materials))
+    chunks.append(resolve_materials_label(case_data))
+
+    dictamen = str(case_data.get("dictamen_text") or "")
+    if dictamen:
+        chunks.append(dictamen[:6000])
+
+    return _text_has_jewelry_keyword(" ".join(chunks))
 
 
 def _safe_dict(value) -> dict:
@@ -109,14 +184,15 @@ def _explicit_gems_detected(case_data: dict) -> bool:
 
 def is_jewelry_or_gemology(case_data: dict) -> bool:
     """
-    Criterio estricto:
-    - parent_domain explícito JOYERIA → True
-    - parent_domain RELOJERIA + gemas explícitas → True
-    - categoría/taxonomía con «joya» o «gema» → True
-    - En cualquier otro caso → False (arte, encendedores, destilados, mobiliario…)
+    Detección automática:
+    - Palabras clave en taxonomía, título, materiales o dictamen
+    - parent_domain JOYERIA
+    - RELOJERIA con gemas explícitas
+    - Categoría/taxonomía con «joya» o «gema»
     """
     case_data = case_data or {}
-    forensic = _safe_dict(case_data.get("forensic_report"))
+    if _jewelry_keyword_detected(case_data):
+        return True
 
     if _category_declares_gems(case_data):
         return True
@@ -128,6 +204,14 @@ def is_jewelry_or_gemology(case_data: dict) -> bool:
         return True
 
     return False
+
+
+def show_jewelry_gemology_ui(case_data: dict) -> bool:
+    """Modo joyería en UI: override manual o detección automática."""
+    case_data = case_data or {}
+    if case_data.get("manual_jewelry_mode") is True:
+        return True
+    return is_jewelry_or_gemology(case_data)
 
 
 def format_gemology_status_line(gem: dict) -> str:

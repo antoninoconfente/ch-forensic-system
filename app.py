@@ -104,6 +104,7 @@ from ui.detail_discipline import (
 from utils.discipline import (
     format_gemology_status_line,
     is_jewelry_or_gemology,
+    show_jewelry_gemology_ui,
     resolve_discipline_label,
     resolve_materials_label,
     serial_decoding_ficha_rows,
@@ -458,6 +459,7 @@ def _metadata_from_case(case: Case) -> dict:
         "forensic_report": dossier.get("forensic_report") or {},
         "market_valuation_report": dossier.get("market_valuation_report") or {},
         "logistics_arbitrage_report": dossier.get("logistics_arbitrage_report") or {},
+        "manual_jewelry_mode": dossier.get("manual_jewelry_mode"),
     }
 
 
@@ -504,6 +506,7 @@ def persist_cloud_case(
         "forensic_report": meta.get("forensic_report") or {},
         "market_valuation_report": meta.get("market_valuation_report") or {},
         "logistics_arbitrage_report": meta.get("logistics_arbitrage_report") or {},
+        "manual_jewelry_mode": meta.get("manual_jewelry_mode"),
     }
     columns = _gemology_columns(gem_block)
     sources = list(image_sources if image_sources is not None else meta.get("evidence_urls") or [])
@@ -528,6 +531,22 @@ def persist_cloud_case(
     )
     stored = save_case(case)
     return _metadata_from_case(stored)
+
+
+def save_manual_jewelry_mode(case_id: str, enabled: bool) -> None:
+    stored = get_case_view_model(case_id)
+    if not stored:
+        return
+    stored["manual_jewelry_mode"] = bool(enabled)
+    if enabled:
+        gem_blk = normalize_gemology_data(stored.get("gemology_data"))
+        gem_blk["applies"] = True
+        stored["gemology_data"] = gem_blk
+    if case_id in _DRAFT_CASES:
+        _DRAFT_CASES[case_id] = stored
+        return
+    if get_case(case_id):
+        _finalize_cloud_case(case_id, stored, stored.get("dictamen_text") or "")
 
 
 def save_custom_identity(case_id: str, custom_brand: str, custom_title: str):
@@ -1337,8 +1356,14 @@ def index_page():
         price_banner = val_info["display"]
 
         base_gem = normalize_gemology_data(ficha.get("gemology_data"))
-        discipline_ctx = {**case_metadata, "dictamen_text": dictamen_text, "gemology_data": base_gem}
-        show_jewelry_ui = is_jewelry_or_gemology(discipline_ctx)
+        discipline_ctx = {
+            **case_metadata,
+            "dictamen_text": dictamen_text,
+            "gemology_data": base_gem,
+            "object_name": real_title,
+        }
+        auto_jewelry = is_jewelry_or_gemology(discipline_ctx)
+        show_jewelry_ui = show_jewelry_gemology_ui(discipline_ctx)
         if show_jewelry_ui:
             seeded_gem = _auto_seed_gemology_from_dictamen(dictamen_text, base_gem)
         else:
@@ -1539,6 +1564,28 @@ def index_page():
                             if spec_value_is_present(val)
                         )
                         ui.html(f"<div class='spec-table'>{rows_html}</div>")
+
+                        manual_jewelry = bool(case_metadata.get("manual_jewelry_mode"))
+                        with ui.row().classes("w-full items-center gap-3 pt-2"):
+                            def toggle_manual_jewelry_mode(enabled: bool) -> None:
+                                save_manual_jewelry_mode(case_id, bool(enabled))
+                                refresh_ui()
+
+                            ui.switch(
+                                "Forzar modo joyería / gemología",
+                                value=manual_jewelry,
+                                on_change=toggle_manual_jewelry_mode,
+                            ).props("dense color=grey-9")
+                            hint = (
+                                "Modo joyería activo por control manual."
+                                if manual_jewelry
+                                else (
+                                    "Detección automática: joyería / gemología."
+                                    if auto_jewelry
+                                    else "Detección automática: otra disciplina (active el interruptor si es una joya)."
+                                )
+                            )
+                            ui.html(f"<span class='micro-coord m-0'>{html.escape(hint)}</span>")
 
                         # ==========================================================
                         # PLIEGO TÉCNICO CAD INTERACTIVO (CAMBIA EL DIBUJO EN VIVO SEGÚN ANILLO Y ENGASTE)
