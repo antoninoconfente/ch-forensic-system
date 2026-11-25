@@ -106,6 +106,7 @@ from utils.discipline import (
     serial_decoding_ficha_rows,
     spec_value_is_present,
 )
+from utils.audit_trail import sync_master_global_audit_trail
 from utils.markdown_format import renumber_markdown_headers
 from utils.parsers import (
     _auto_seed_gemology_from_dictamen,
@@ -456,6 +457,7 @@ def _metadata_from_case(case: Case) -> dict:
         "forensic_report": dossier.get("forensic_report") or {},
         "market_valuation_report": dossier.get("market_valuation_report") or {},
         "logistics_arbitrage_report": dossier.get("logistics_arbitrage_report") or {},
+        "master_global_audit_trail": dossier.get("master_global_audit_trail") or [],
         "manual_jewelry_mode": dossier.get("manual_jewelry_mode"),
     }
 
@@ -503,6 +505,7 @@ def persist_cloud_case(
         "forensic_report": meta.get("forensic_report") or {},
         "market_valuation_report": meta.get("market_valuation_report") or {},
         "logistics_arbitrage_report": meta.get("logistics_arbitrage_report") or {},
+        "master_global_audit_trail": meta.get("master_global_audit_trail") or [],
         "manual_jewelry_mode": meta.get("manual_jewelry_mode"),
     }
     columns = _gemology_columns(gem_block)
@@ -737,6 +740,11 @@ def commit_ficha_answers(
         stored["market_valuation_report"] = extras["market_valuation_report"]
     if extras.get("logistics_arbitrage_report"):
         stored["logistics_arbitrage_report"] = extras["logistics_arbitrage_report"]
+    if extras.get("master_global_audit_trail"):
+        stored["master_global_audit_trail"] = extras["master_global_audit_trail"]
+    if investigation.get("master_global_audit_trail"):
+        stored["master_global_audit_trail"] = investigation["master_global_audit_trail"]
+    sync_master_global_audit_trail(stored)
     if extras.get("cad_blueprint"):
         stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
     if case_id in _DRAFT_CASES:
@@ -1836,7 +1844,9 @@ def index_page():
                     async def refresh_appraisal():
                         mkt_status.text = "⏳ ACTUALIZANDO TASACIÓN Y BUYER SEARCH EN SEGUNDO PLANO..."
                         mkt_status.classes(remove="hidden")
-                        notes_with_rigor = (ficha.get("context_notes") or ficha.get("intake_notes") or real_title) + "\n\n" + JEWELRY_RIGOR_INSTRUCTIONS
+                        notes_with_rigor = (
+                            ficha.get("context_notes") or ficha.get("intake_notes") or real_title
+                        ) + "\n\n" + JEWELRY_RIGOR_INSTRUCTIONS
                         allow_net = case_id not in _DRAFT_CASES
                         scratch, _ = _scratch_case_folder(
                             case_id,
@@ -1844,22 +1854,34 @@ def index_page():
                             evidence_paths,
                             allow_network=allow_net,
                         )
-                        updated = await run.io_bound(
-                            agent.update_appraisal,
-                            scratch,
-                            real_title,
-                            notes_with_rigor,
+                        payload = dict(get_case_view_model(case_id) or case_metadata or {})
+                        result = await run.io_bound(
+                            expert_council.recalculate_market_and_buyers,
+                            case_id=case_id,
+                            metadata=payload,
+                            object_description=real_title,
+                            context_notes=notes_with_rigor,
+                            dictamen_text=dictamen_text,
+                            case_folder=scratch,
+                            legacy_agent=agent,
                         )
-                        if updated and not str(updated).startswith("Error"):
+                        updated = result.get("dictamen_text") or ""
+                        if updated and not str(updated).startswith("[ERR") and not str(updated).startswith("Error"):
+                            stored = dict(get_case_view_model(case_id) or payload)
+                            stored["dictamen_text"] = updated
+                            if result.get("market_valuation_report"):
+                                stored["market_valuation_report"] = result["market_valuation_report"]
+                            if result.get("master_global_audit_trail"):
+                                stored["master_global_audit_trail"] = result["master_global_audit_trail"]
+                            if result.get("successful_queries"):
+                                stored["successful_queries"] = result["successful_queries"]
                             if case_id in _DRAFT_CASES:
-                                draft = dict(_DRAFT_CASES[case_id])
-                                draft["dictamen_text"] = updated
-                                _DRAFT_CASES[case_id] = draft
+                                _DRAFT_CASES[case_id] = stored
                             else:
                                 await run.io_bound(
                                     _finalize_cloud_case,
                                     case_id,
-                                    case_metadata,
+                                    stored,
                                     updated,
                                     evidence_paths,
                                 )

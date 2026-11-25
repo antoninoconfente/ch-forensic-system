@@ -17,8 +17,10 @@ from pydantic import ValidationError
 from agents.council_prompts import (
     GLOBAL_AUDIT_TRAIL_JSON_HINT,
     MARKET_JSON_PROSE_DIRECTIVE,
+    MARKET_PRICE_ANCHOR_DIRECTIVE,
     MODO_AUDITOR_MARKET_DIRECTIVE,
     PRECEDENTS_NATURAL_LANGUAGE_DIRECTIVE,
+    WEB_RAG_QUALITY_DIRECTIVE,
 )
 from agents.schemas import ForensicReport, MarketComparable, MarketValuationReport
 from database.client import search_similar_cases
@@ -68,6 +70,7 @@ class MarketIntelligenceAgent:
         context_notes: str,
         web_market_context: str,
         case_id: str,
+        prior_market_report: dict | None = None,
     ) -> MarketValuationReport | None:
         query = self._build_rag_query(forensic_report, object_description, context_notes)
         _market_log("[MERCADO] Consultando memoria vectorial de galería (pgvector)…")
@@ -90,9 +93,19 @@ class MarketIntelligenceAgent:
             f"{MODO_AUDITOR_MARKET_DIRECTIVE}\n\n"
             f"{MARKET_JSON_PROSE_DIRECTIVE}\n\n"
             f"{PRECEDENTS_NATURAL_LANGUAGE_DIRECTIVE}\n\n"
+            f"{WEB_RAG_QUALITY_DIRECTIVE}\n\n"
+            f"{MARKET_PRICE_ANCHOR_DIRECTIVE}\n\n"
             f"{GLOBAL_AUDIT_TRAIL_JSON_HINT}"
         )
         precedents_prompt = self._precedents_for_prompt(precedents)
+        prior_anchor = ""
+        if isinstance(prior_market_report, dict) and prior_market_report:
+            prior_anchor = (
+                "\nBanda de valoración previa del expediente (mantener si comparables débiles):\n"
+                f"- Bajo: {prior_market_report.get('estimated_value_low', '—')}\n"
+                f"- Alto: {prior_market_report.get('estimated_value_high', '—')}\n"
+                f"- Techo adquisición: {prior_market_report.get('recommended_acquisition_ceiling', '—')}\n"
+            )
         prompt = (
             f"Caso activo: {case_id}\n"
             f"Descripción: {object_description}\n"
@@ -100,8 +113,10 @@ class MarketIntelligenceAgent:
             f"Forense:\n{(forensic_report.model_dump_json() if forensic_report else '{}')}\n\n"
             f"Precedentes internos recuperados (usar solo para razonar; no citar IDs ni similitudes numéricas al usuario):\n"
             f"{json.dumps(precedents_prompt, ensure_ascii=False, indent=2)}\n\n"
-            f"Contexto mercado web:\n{web_market_context or '—'}\n\n"
+            f"Contexto mercado web (ya filtrado; no cites buscadores ni traductores):\n"
+            f"{web_market_context or '—'}\n\n"
             f"Comparables internos semilla:\n{json.dumps([c.model_dump() for c in internal_seed], ensure_ascii=False)}"
+            f"{prior_anchor}"
         )
 
         raw = self._generate_json(system, prompt)

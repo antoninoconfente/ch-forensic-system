@@ -16,6 +16,7 @@ from agents.schemas import (
     infer_parent_domain,
     serial_decoding_dict,
 )
+from utils.audit_trail import sync_master_global_audit_trail
 from utils.markdown_format import renumber_markdown_headers
 from src.research.ai_agent import LocalAIAgent
 
@@ -342,7 +343,7 @@ def _append_market_dictamen(dictamen_text: str, report: MarketValuationReport | 
     if report.internal_precedents_used:
         block += "\n**Precedentes internos CH:**\n"
         block += "\n".join(
-            f"{i}. {c.title} (sim={c.similarity_or_relevance})"
+            f"{i}. {c.title}: {c.similarity_or_relevance}"
             for i, c in enumerate(report.internal_precedents_used, 1)
         )
         block += "\n"
@@ -518,6 +519,7 @@ class ExpertCouncilOrchestrator:
             context_notes,
             web_context,
             case_id,
+            prior_market_report=prior_extras.get("market_valuation_report"),
         )
         if market_model is not None:
             market_report = market_model
@@ -574,6 +576,20 @@ class ExpertCouncilOrchestrator:
         if market_report is not None:
             draft_extras["market_valuation_report"] = market_report.model_dump()
         draft_extras["logistics_arbitrage_report"] = logistics_report.model_dump()
+        dossier_seed = {
+            "forensic_report": forensic_dump or prior_forensic_report or {},
+            "market_valuation_report": (
+                market_report.model_dump() if market_report else prior_extras.get("market_valuation_report") or {}
+            ),
+            "logistics_arbitrage_report": (
+                logistics_report.model_dump()
+                if logistics_report
+                else prior_extras.get("logistics_arbitrage_report") or {}
+            ),
+        }
+        sync_master_global_audit_trail(dossier_seed)
+        if dossier_seed.get("master_global_audit_trail"):
+            draft_extras["master_global_audit_trail"] = dossier_seed["master_global_audit_trail"]
 
         forensic_dump = None
         if parsed_forensic is not None:
@@ -590,4 +606,78 @@ class ExpertCouncilOrchestrator:
             "market_valuation_report": market_report.model_dump() if market_report else None,
             "logistics_arbitrage_report": logistics_report.model_dump(),
             "draft_extras": draft_extras,
+            "master_global_audit_trail": draft_extras.get("master_global_audit_trail"),
+        }
+
+    def recalculate_market_and_buyers(
+        self,
+        *,
+        case_id: str,
+        metadata: dict,
+        object_description: str,
+        context_notes: str,
+        dictamen_text: str,
+        case_folder: str,
+        legacy_agent: LocalAIAgent | None = None,
+    ) -> dict:
+        """Recálculo parcial: tasación MoE + dictamen buyers; preserva global_audit_trail."""
+        agent = legacy_agent or self.legacy_agent
+        if agent is None:
+            return {
+                "dictamen_text": "[ERR] Agente legado no configurado.",
+                "market_valuation_report": metadata.get("market_valuation_report"),
+            }
+
+        prior_market = metadata.get("market_valuation_report") or {}
+        parsed_forensic: ForensicReport | None = None
+        forensic_raw = metadata.get("forensic_report") or {}
+        if isinstance(forensic_raw, dict) and forensic_raw:
+            try:
+                parsed_forensic = ForensicReport.model_validate(forensic_raw)
+            except Exception:
+                parsed_forensic = None
+
+        web_context, successful_queries = agent._execute_deep_research(
+            object_description,
+            context_notes,
+            forensic_report=parsed_forensic,
+        )
+
+        market_model = self.market_agent.analyze(
+            parsed_forensic,
+            object_description,
+            context_notes,
+            web_context,
+            case_id,
+            prior_market_report=prior_market if prior_market else None,
+        )
+        market_report: MarketValuationReport | None = market_model
+        if market_report is not None and prior_market:
+            market_report = merge_market_audit_trail(prior_market, market_report)
+
+        notes_for_legacy = context_notes
+        if market_report is not None:
+            notes_for_legacy = f"{context_notes}\n\n{_market_intelligence_block(market_report)}"
+        if web_context:
+            notes_for_legacy = f"{notes_for_legacy}\n\n[CONTEXTO WEB DE MERCADO]\n{web_context}"
+
+        updated_dictamen = agent.update_appraisal(case_folder, object_description, notes_for_legacy)
+        if market_report is not None and updated_dictamen and not str(updated_dictamen).startswith("[ERR"):
+            updated_dictamen = _append_market_dictamen(updated_dictamen, market_report)
+            updated_dictamen = renumber_markdown_headers(updated_dictamen)
+
+        stored = dict(metadata)
+        if market_report is not None:
+            stored["market_valuation_report"] = market_report.model_dump()
+        if successful_queries:
+            stored["successful_queries"] = list(
+                dict.fromkeys((metadata.get("successful_queries") or []) + successful_queries)
+            )
+        sync_master_global_audit_trail(stored)
+
+        return {
+            "dictamen_text": updated_dictamen or dictamen_text,
+            "market_valuation_report": stored.get("market_valuation_report"),
+            "master_global_audit_trail": stored.get("master_global_audit_trail"),
+            "successful_queries": stored.get("successful_queries"),
         }

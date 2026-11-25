@@ -248,9 +248,14 @@ def _trail_from_report_blob(blob: dict | None, phase: str) -> list[str]:
 
 
 def audit_trail_from_case(case_data: dict | None) -> list[str]:
-    """Concatena global_audit_trail de Forense + Tasación + Logística."""
+    """Concatena global_audit_trail de Forense + Tasación + Logística (o maestro persistido)."""
     if not isinstance(case_data, dict):
         return []
+    master = case_data.get("master_global_audit_trail")
+    if isinstance(master, list):
+        entries = [str(x).strip() for x in master if str(x).strip()]
+        if entries:
+            return entries
     merged: list[str] = []
     merged.extend(_trail_from_report_blob(case_data.get("forensic_report"), "FORENSE"))
     merged.extend(_trail_from_report_blob(case_data.get("market_valuation_report"), "TASACIÓN"))

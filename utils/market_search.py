@@ -25,6 +25,20 @@ _IRRELEVANT_SNIPPETS = re.compile(
     re.IGNORECASE,
 )
 
+_BLOCKED_DOMAINS = re.compile(
+    r"(?:^|//)(?:www\.)?"
+    r"(?:google\.[a-z.]+|yahoo\.[a-z.]+|bing\.com|duckduckgo\.com|deepl\.com|translate\.google|"
+    r"accounts\.google|login\.|signin\.|auth\.|facebook\.com|twitter\.com|x\.com)",
+    re.IGNORECASE,
+)
+
+_TRUSTED_MARKET_HINTS = re.compile(
+    r"catawiki|ebay\.|chrono24|christies|sothebys|bonhams|phillips|heritageauctions|"
+    r"liveauctioneers|invaluable|1stdibs|barnebys|dorotheum|artcurial|lempertz|"
+    r"subasta|auction|hammer price|lot\s+#|precio\s+de\s+salida",
+    re.IGNORECASE,
+)
+
 
 def _brand_model_tokens(
     object_description: str,
@@ -76,16 +90,28 @@ def build_comparable_web_queries(
     if not core or len(core) < 4:
         return []
     return [
-        f"{core} subasta precio",
-        f"{core} auction hammer price",
+        f'"{core}" catawiki subasta',
+        f'"{core}" site:chrono24.com',
+        f'"{core}" ebay sold auction',
+        f'"{core}" hammer price christies OR sothebys OR bonhams",
     ]
 
 
 def filter_relevant_web_results(results: list[dict]) -> list[dict]:
+    """Descarta buscadores, traductores y login; solo plataformas de mercado confiables."""
     filtered: list[dict] = []
     for item in results or []:
-        blob = f"{item.get('title', '')} {item.get('body', '')}"
+        href = str(item.get("href") or "")
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        blob = f"{title} {body} {href}"
         if _IRRELEVANT_SNIPPETS.search(blob):
+            continue
+        if _BLOCKED_DOMAINS.search(href) or _BLOCKED_DOMAINS.search(blob):
+            continue
+        if re.search(r"\b(übersetzer|translator|traductor)\b", blob, re.IGNORECASE):
+            continue
+        if not _TRUSTED_MARKET_HINTS.search(blob):
             continue
         filtered.append(item)
     return filtered

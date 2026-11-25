@@ -29,9 +29,15 @@ class WebSearchEngine:
     @staticmethod
     def format_search_results_for_prompt(results: list) -> str:
         if not results:
-            return "[No se encontraron referencias web externas directas en este momento]"
-        
-        formatted = "REFERENCIAS Y CATÁLOGOS ENCONTRADOS EN LA WEB:\n"
+            return (
+                "[No se encontraron referencias web externas directas en este momento. "
+                "No uses buscadores genéricos ni traductores como fuente de precios.]"
+            )
+
+        formatted = (
+            "REFERENCIAS Y CATÁLOGOS ENCONTRADOS EN LA WEB (solo subastas/plataformas válidas):\n"
+            "FILTRO DE CALIDAD: Ignorar Google/Yahoo/Bing/DeepL/login. Solo comparables de mercado reales.\n"
+        )
         for idx, res in enumerate(results, 1):
             formatted += f"{idx}. [{res['title']}]({res['href']})\n   Resumen: {res['body']}\n\n"
         return formatted
