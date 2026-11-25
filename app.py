@@ -1238,7 +1238,11 @@ def index_page():
             with ui.expansion("CREAR NUEVO LOTE COMERCIAL", value=not bool(lots)).classes("w-full border border-[#141413] mb-6 p-2"):
                 with ui.row().classes("w-full grid grid-cols-1 md:grid-cols-12 gap-4 items-end p-2"):
                     lot_name_in = ui.input(label="Nombre del lote", placeholder="Ej. Oro vintage, primavera").classes("md:col-span-7 w-full")
-                    strategy_sel = ui.select(STRATEGIES, value=STRATEGIES[0], label="Estrategia de salida").classes("md:col-span-5 w-full")
+                    strategy_sel = ui.select(
+                        list(STRATEGIES),
+                        value=STRATEGIES[0],
+                        label="Estrategia de salida",
+                    ).classes("md:col-span-5 w-full")
 
                     def create_new_lot():
                         if not (lot_name_in.value or "").strip():

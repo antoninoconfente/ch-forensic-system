@@ -44,6 +44,13 @@ from utils.discipline import (
 )
 
 
+def _ui_options(options):
+    """NiceGUI: opciones de radio/select deben ser listas (no tuplas) en refrescos reactivos."""
+    if isinstance(options, dict):
+        return options
+    return list(options)
+
+
 def render_logistics_arbitrage_report(report: dict, val_display: str) -> None:
     if not report:
         ui.html(
@@ -148,19 +155,19 @@ def render_jewelry_cad_laboratory(
   )
 
   cad_type = ui.select(
-    JEWELRY_TYPES,
+    _ui_options(JEWELRY_TYPES),
     value=saved_cad.get("jewelry_type", "Anillo / Sortija"),
     label="1. Tipología de pieza",
   ).classes("w-full")
 
   with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-3"):
     cad_shank = ui.select(
-      RING_SHANK_PROFILES,
+      _ui_options(RING_SHANK_PROFILES),
       value=saved_cad.get("shank_profile", RING_SHANK_PROFILES[0]),
       label="2. Estilo de Anillo / Banda",
     ).classes("w-full")
     cad_setting = ui.select(
-      SETTING_ARCHITECTURES,
+      _ui_options(SETTING_ARCHITECTURES),
       value=saved_cad.get("setting_arch", SETTING_ARCHITECTURES[0]),
       label="3. Tipo de Engaste (ver dibujo III)",
     ).classes("w-full")
@@ -203,7 +210,7 @@ def render_jewelry_cad_laboratory(
       label="Especie",
     ).classes("w-full")
     c_cut = ui.select(
-      GEM_CUT_CATALOG,
+      _ui_options(GEM_CUT_CATALOG),
       value=saved_cad.get("central_cut", "Esmeralda / Octogonal"),
       label="Corte / Talla",
     ).classes("w-full")
@@ -241,7 +248,7 @@ def render_jewelry_cad_laboratory(
       label="Especie",
     ).classes("w-full")
     s_cut = ui.select(
-      GEM_CUT_CATALOG,
+      _ui_options(GEM_CUT_CATALOG),
       value=saved_cad.get("side_cut", "Brillante Redondo"),
       label="Corte / Talla",
     ).classes("w-full")
@@ -478,27 +485,30 @@ def render_gemology_calculator(
             applies_cb.on_value_change(lambda e: (gem_state.update({"applies": e.value}), render_controls()))
 
             if gem_state["applies"]:
-                subj_radio = ui.radio(SUBJECTS, value=gem_state["subject"]).props("inline dense color=dark")
+                subj_radio = ui.radio(
+                    _ui_options(SUBJECTS),
+                    value=gem_state["subject"],
+                ).props("inline dense color=dark")
                 subj_radio.on_value_change(lambda e: (gem_state.update({"subject": e.value}), render_controls()))
 
                 with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-4"):
-                    ui.select(METALS, value=gem_state["metal_kind"], label="Metal base").on_value_change(
+                    ui.select(_ui_options(METALS), value=gem_state["metal_kind"], label="Metal base").on_value_change(
                         lambda e: (gem_state.update({"metal_kind": e.value}), render_controls())
                     ).classes("w-full")
                     ui.number(label="Gramos de metal", value=gem_state["metal_grams"], min=0.0, step=0.1).on_value_change(
                         lambda e: (gem_state.update({"metal_grams": float(e.value or 0.0)}), render_controls())
                     ).classes("w-full")
-                    ui.select(AUTHORSHIPS, value=gem_state["authorship"], label="Autoría o taller").on_value_change(
+                    ui.select(_ui_options(AUTHORSHIPS), value=gem_state["authorship"], label="Autoría o taller").on_value_change(
                         lambda e: (gem_state.update({"authorship": e.value}), render_controls())
                     ).classes("w-full")
-                    ui.select(SETTINGS, value=gem_state["setting"], label="Engaste").on_value_change(
+                    ui.select(_ui_options(SETTINGS), value=gem_state["setting"], label="Engaste").on_value_change(
                         lambda e: (gem_state.update({"setting": e.value}), render_controls())
                     ).classes("w-full")
 
                 if gem_state["subject"] in ("Gema", "Gema y perla"):
                     ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE GEMA</span>")
                     with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
-                        ui.select(GEM_SPECIES, value=gem_state["gem"]["species"], label="Especie").on_value_change(
+                        ui.select(_ui_options(GEM_SPECIES), value=gem_state["gem"]["species"], label="Especie").on_value_change(
                             lambda e: (gem_state["gem"].update({"species": e.value}), render_controls())
                         ).classes("w-full")
                         ui.number(
@@ -509,23 +519,35 @@ def render_gemology_calculator(
                         ).on_value_change(
                             lambda e: (gem_state["gem"].update({"carat": float(e.value or 0)}), render_controls())
                         ).classes("w-full")
-                        ui.select(GEM_COLORS, value=gem_state["gem"]["color"], label="Color").on_value_change(
+                        ui.select(_ui_options(GEM_COLORS), value=gem_state["gem"]["color"], label="Color").on_value_change(
                             lambda e: (gem_state["gem"].update({"color": e.value}), render_controls())
                         ).classes("w-full")
-                        ui.select(GEM_CLARITIES, value=gem_state["gem"]["clarity"], label="Pureza").on_value_change(
+                        ui.select(
+                            _ui_options(GEM_CLARITIES),
+                            value=gem_state["gem"]["clarity"],
+                            label="Pureza",
+                        ).on_value_change(
                             lambda e: (gem_state["gem"].update({"clarity": e.value}), render_controls())
                         ).classes("w-full")
-                        ui.select(GEM_CUTS, value=gem_state["gem"]["cut"], label="Talla").on_value_change(
+                        ui.select(_ui_options(GEM_CUTS), value=gem_state["gem"]["cut"], label="Talla").on_value_change(
                             lambda e: (gem_state["gem"].update({"cut": e.value}), render_controls())
                         ).classes("w-full")
-                        ui.select(GEM_NATURES, value=gem_state["gem"]["nature"], label="Naturaleza").on_value_change(
+                        ui.select(
+                            _ui_options(GEM_NATURES),
+                            value=gem_state["gem"]["nature"],
+                            label="Naturaleza",
+                        ).on_value_change(
                             lambda e: (gem_state["gem"].update({"nature": e.value}), render_controls())
                         ).classes("w-full")
 
                 if gem_state["subject"] in ("Perla", "Gema y perla"):
                     ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE PERLA</span>")
                     with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
-                        ui.select(PEARL_NATURES, value=gem_state["pearl"]["nature"], label="Naturaleza").on_value_change(
+                        ui.select(
+                            _ui_options(PEARL_NATURES),
+                            value=gem_state["pearl"]["nature"],
+                            label="Naturaleza",
+                        ).on_value_change(
                             lambda e: (gem_state["pearl"].update({"nature": e.value}), render_controls())
                         ).classes("w-full")
                         ui.number(
@@ -536,16 +558,28 @@ def render_gemology_calculator(
                         ).on_value_change(
                             lambda e: (gem_state["pearl"].update({"count": int(e.value or 0)}), render_controls())
                         ).classes("w-full")
-                        ui.select(PEARL_LUSTER, value=gem_state["pearl"]["luster"], label="Lustre").on_value_change(
+                        ui.select(
+                            _ui_options(PEARL_LUSTER),
+                            value=gem_state["pearl"]["luster"],
+                            label="Lustre",
+                        ).on_value_change(
                             lambda e: (gem_state["pearl"].update({"luster": e.value}), render_controls())
                         ).classes("w-full")
-                        ui.select(PEARL_NACRE, value=gem_state["pearl"]["nacre"], label="Nácar").on_value_change(
+                        ui.select(_ui_options(PEARL_NACRE), value=gem_state["pearl"]["nacre"], label="Nácar").on_value_change(
                             lambda e: (gem_state["pearl"].update({"nacre": e.value}), render_controls())
                         ).classes("w-full")
-                        ui.select(PEARL_SURFACE, value=gem_state["pearl"]["surface"], label="Superficie").on_value_change(
+                        ui.select(
+                            _ui_options(PEARL_SURFACE),
+                            value=gem_state["pearl"]["surface"],
+                            label="Superficie",
+                        ).on_value_change(
                             lambda e: (gem_state["pearl"].update({"surface": e.value}), render_controls())
                         ).classes("w-full")
-                        ui.select(PEARL_MATCHING, value=gem_state["pearl"]["matching"], label="Matching").on_value_change(
+                        ui.select(
+                            _ui_options(PEARL_MATCHING),
+                            value=gem_state["pearl"]["matching"],
+                            label="Matching",
+                        ).on_value_change(
                             lambda e: (gem_state["pearl"].update({"matching": e.value}), render_controls())
                         ).classes("w-full")
 
