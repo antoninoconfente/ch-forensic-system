@@ -14,7 +14,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from agents.orchestrator import ExpertCouncilOrchestrator
+from agents.orchestrator import ExpertCouncilOrchestrator, apply_user_resolutions_to_forensic_dict
 from src.research.ai_agent import (
     LocalAIAgent,
     apply_interrogation_update,
@@ -95,6 +95,7 @@ from ui.detail_discipline import (
     render_logistics_arbitrage_report,
     render_physical_metrology_block,
     render_public_ficha_spec_table,
+    render_resolved_requests_history,
 )
 from utils.discipline import (
     is_jewelry_or_gemology,
@@ -666,7 +667,13 @@ def commit_ficha_answers(case_id: str, case_folder: str, metadata: dict, pending
     images = _analysis_image_paths(case_id, stored.get("evidence_urls") or [], allow_network=allow_net)
     images.extend(new_locals)
     prompt_ctx = (updated_state.get("prompt_context") or "") + "\n\n" + JEWELRY_RIGOR_INSTRUCTIONS
-    prior_forensic = dict(stored.get("forensic_report") or {})
+    prior_forensic = apply_user_resolutions_to_forensic_dict(
+        stored.get("forensic_report") or {},
+        pending_questions,
+        answers_by_index,
+        files_by_index,
+    )
+    stored["forensic_report"] = prior_forensic
     investigation = expert_council.run_investigation(
         stored.get("custom_title") or stored.get("object_description", "Pieza peritada"),
         prompt_ctx,
@@ -1586,6 +1593,8 @@ def index_page():
 
                     if is_admin_user():
                         render_black_box_audit_trail(discipline_ctx)
+
+                    render_resolved_requests_history(discipline_ctx)
 
                     ui.html("<span class='micro-coord mt-2'>/// RESOLUCIÓN DE DUDAS ACTIVAS</span>")
                     if not pending_actionable:

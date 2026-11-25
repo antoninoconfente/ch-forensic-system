@@ -80,6 +80,20 @@ class DimensionsMm(BaseModel):
     diameter: float | None = Field(default=None, description="Diámetro en mm")
 
 
+class ResolvedRequest(BaseModel):
+    """Pregunta ya respondida en la Mesa de Auditoría."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pregunta_original: str = Field(description="La pregunta visual que se le hizo al usuario.")
+    respuesta_usuario: str = Field(description="Lo que respondió el usuario.")
+
+    @field_validator("pregunta_original", "respuesta_usuario")
+    @classmethod
+    def strip_resolved(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
 class ActionableRequest(BaseModel):
     """Doble cerebro: razonamiento forense interno + petición visible al usuario."""
 
@@ -156,6 +170,10 @@ class ForensicReport(BaseModel):
             "11071, aumentando certeza pericial al 92% y subiendo valoración a 550€'."
         ),
     )
+    preguntas_resueltas: list[ResolvedRequest] = Field(
+        default_factory=list,
+        description="Historial de preguntas ya respondidas.",
+    )
 
     @field_validator("global_audit_trail", mode="before")
     @classmethod
@@ -206,6 +224,14 @@ class ForensicReport(BaseModel):
 
         if data.get("global_audit_trail") is None:
             data["global_audit_trail"] = []
+
+        raw_resolved = data.get("preguntas_resueltas")
+        if raw_resolved is None:
+            data["preguntas_resueltas"] = []
+        elif isinstance(raw_resolved, list):
+            data["preguntas_resueltas"] = [item for item in raw_resolved if isinstance(item, dict)]
+        else:
+            data["preguntas_resueltas"] = []
 
         return data
 

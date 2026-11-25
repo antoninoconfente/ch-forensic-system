@@ -41,6 +41,18 @@ MODO AUDITOR (GLOBAL AUDIT TRAIL):
 - PREGUNTAS ACTIVAS: Si el usuario ya ha respondido a una duda (ej. ya te dio el peso), NO vuelvas a pedir ese dato en recomendaciones. Usa el dato, audítalo en la Caja Negra, y pide solo lo que falte.
 """
 
+FORENSIC_JSON_RESOLVED_FIELDS = """
+preguntas_resueltas: lista de {pregunta_original, respuesta_usuario} con cada duda ya contestada por el usuario.
+Cuando el usuario responda a una recomendación, retírala de recomendaciones y muévela obligatoriamente a preguntas_resueltas.
+No repitas en recomendaciones activas peticiones ya presentes en preguntas_resueltas.
+"""
+
+RESOLVED_REQUESTS_DIRECTIVE = """
+HISTORIAL DE MESA DE AUDITORÍA (preguntas_resueltas):
+Cuando el usuario responda a una de tus recomendaciones, retírala de las dudas activas (recomendaciones) y muévela obligatoriamente al campo preguntas_resueltas, registrando la pregunta original (user_prompt) y la respuesta que te dio.
+Preserva las entradas históricas de preguntas_resueltas al generar el JSON; no borres resoluciones previas.
+"""
+
 FORENSIC_JSON_AUDIT_TRAIL_FIELDS = """
 global_audit_trail: lista de strings (puede iniciar vacía). Cada línea = evento de auditoría con dato recibido o decisión tomada e impacto explícito (certeza %, valoración EUR, autenticidad). No duplicar en recomendaciones ni technical_summary orientado al usuario.
 """

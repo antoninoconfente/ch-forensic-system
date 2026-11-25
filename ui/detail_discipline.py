@@ -144,6 +144,31 @@ def render_public_ficha_spec_table(rows: list[tuple[str, str]]) -> None:
     ui.html(f"<div class='spec-table w-full'>{rows_html}</div>")
 
 
+def render_resolved_requests_history(case_data: dict) -> None:
+    """Historial de preguntas ya respondidas (solo lectura). Omite render si está vacío."""
+    forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}
+    raw = forensic.get("preguntas_resueltas") or []
+    items = [r for r in raw if isinstance(r, dict) and str(r.get("pregunta_original") or "").strip()]
+    if not items:
+        return
+
+    ui.html("<span class='micro-coord mt-2'>/// HISTORIAL DE RESOLUCIÓN</span>")
+    with ui.column().classes("w-full gap-3 mt-2"):
+        for entry in items:
+            pregunta = str(entry.get("pregunta_original") or "").strip()
+            respuesta = str(entry.get("respuesta_usuario") or "").strip() or "—"
+            with ui.column().classes(
+                "w-full gap-1 p-3 border border-[#E5E0D6] bg-[#F8F6F2] opacity-90"
+            ):
+                ui.html(
+                    f"<p class='m-0 text-[11px] text-[#625E57] leading-relaxed'>{html.escape(pregunta)}</p>"
+                )
+                ui.html(
+                    f"<p class='m-0 text-[12px] text-[#141413] leading-relaxed font-medium'>"
+                    f"{html.escape(respuesta)}</p>"
+                )
+
+
 def render_black_box_audit_trail(case_data: dict) -> None:
     """Caja negra: solo debe invocarse si el llamador ya validó permisos admin."""
     forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}

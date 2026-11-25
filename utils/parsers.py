@@ -516,6 +516,11 @@ def pending_actionable_requests(metadata: dict, alerts_text: str = "") -> list[d
     meta = metadata or {}
     forensic = meta.get("forensic_report") or {}
     answers = meta.get("question_answers") or {}
+    resolved_prompts = {
+        str(r.get("pregunta_original") or "").strip()
+        for r in (forensic.get("preguntas_resueltas") or [])
+        if isinstance(r, dict) and str(r.get("pregunta_original") or "").strip()
+    }
     pending: list[dict] = []
 
     for item in forensic.get("recomendaciones") or []:
@@ -528,6 +533,8 @@ def pending_actionable_requests(metadata: dict, alerts_text: str = "") -> list[d
             except Exception:
                 continue
         if not view:
+            continue
+        if view["user_prompt"] in resolved_prompts:
             continue
         if _is_substantive_answer(answers.get(view["user_prompt"], "")):
             continue

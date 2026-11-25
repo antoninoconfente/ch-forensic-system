@@ -12,11 +12,76 @@ from agents.schemas import (
     ForensicReport,
     LogisticsArbitrageReport,
     MarketValuationReport,
+    ResolvedRequest,
     infer_parent_domain,
     serial_decoding_dict,
 )
 from utils.markdown_format import renumber_markdown_headers
 from src.research.ai_agent import LocalAIAgent
+
+
+def _prior_resolved_entries(prior: dict | ForensicReport | None) -> list[ResolvedRequest]:
+    entries: list[ResolvedRequest] = []
+    if isinstance(prior, ForensicReport):
+        entries = list(prior.preguntas_resueltas or [])
+    elif isinstance(prior, dict):
+        for item in prior.get("preguntas_resueltas") or []:
+            if isinstance(item, dict):
+                try:
+                    entries.append(ResolvedRequest.model_validate(item))
+                except Exception:
+                    continue
+    return entries
+
+
+def merge_preguntas_resueltas(prior: dict | ForensicReport | None, report: ForensicReport) -> ForensicReport:
+    """Fusiona historial de preguntas respondidas (prior + nuevas, sin perder claves previas)."""
+    by_question: dict[str, ResolvedRequest] = {}
+    for req in _prior_resolved_entries(prior) + list(report.preguntas_resueltas or []):
+        key = str(req.pregunta_original or "").strip()
+        if key:
+            by_question[key] = req
+    return report.model_copy(update={"preguntas_resueltas": list(by_question.values())})
+
+
+def merge_forensic_historical_fields(
+    prior: dict | ForensicReport | None, report: ForensicReport
+) -> ForensicReport:
+    report = merge_global_audit_trail(prior, report)
+    return merge_preguntas_resueltas(prior, report)
+
+
+def apply_user_resolutions_to_forensic_dict(
+    prior_forensic: dict | None,
+    pending_questions: list[str],
+    answers_by_index: dict,
+    files_by_index: dict | None = None,
+) -> dict:
+    """Persiste respuestas de la mesa antes del re-peritaje (respaldo si el LLM no las copia)."""
+    from utils.parsers import _is_substantive_answer
+
+    forensic = dict(prior_forensic or {})
+    indexed: dict[str, dict] = {
+        str(r.get("pregunta_original") or "").strip(): r
+        for r in (forensic.get("preguntas_resueltas") or [])
+        if isinstance(r, dict) and str(r.get("pregunta_original") or "").strip()
+    }
+    files_by_index = files_by_index or {}
+    for index, question in enumerate(pending_questions or []):
+        q = str(question or "").strip()
+        if not q:
+            continue
+        answer = answers_by_index.get(index, "")
+        answer = answer.strip() if isinstance(answer, str) else ""
+        if _is_substantive_answer(answer):
+            indexed[q] = {"pregunta_original": q, "respuesta_usuario": answer}
+        elif files_by_index.get(index):
+            indexed[q] = {
+                "pregunta_original": q,
+                "respuesta_usuario": "Evidencia fotográfica adjunta en mesa de auditoría.",
+            }
+    forensic["preguntas_resueltas"] = list(indexed.values())
+    return forensic
 
 
 def merge_global_audit_trail(prior: dict | ForensicReport | None, report: ForensicReport) -> ForensicReport:
@@ -421,7 +486,7 @@ class ExpertCouncilOrchestrator:
         )
 
         if parsed_forensic is not None and prior_forensic_report:
-            parsed_forensic = merge_global_audit_trail(prior_forensic_report, parsed_forensic)
+            parsed_forensic = merge_forensic_historical_fields(prior_forensic_report, parsed_forensic)
 
         if parsed_forensic is not None:
             dictamen_text = _append_forensic_dictamen(dictamen_text, parsed_forensic)
