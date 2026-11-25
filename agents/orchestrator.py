@@ -126,6 +126,17 @@ def _forensic_protocol_block(report: ForensicReport, rubric_version: int | None 
     serial_ctx = _forensic_serial_context(report)
     if serial_ctx:
         base = base.rstrip() + "\n" + serial_ctx
+    if report.recomendaciones:
+        user_lines = "\n".join(
+            f"  {i}. [{r.request_type}] {r.user_prompt}"
+            for i, r in enumerate(report.recomendaciones, 1)
+        )
+        base = (
+            base.rstrip()
+            + "\n[PETICIONES AL PERITO — TEXTO PÚBLICO]\n"
+            + user_lines
+            + "\n"
+        )
     return base
 
 
@@ -220,6 +231,12 @@ def _append_forensic_dictamen(dictamen_text: str, report: ForensicReport) -> str
     if report.anomalies_detected:
         block += "\n**Anomalías detectadas:**\n"
         block += "\n".join(f"{i}. {a}" for i, a in enumerate(report.anomalies_detected, 1))
+        block += "\n"
+    if report.recomendaciones:
+        block += "\n**Peticiones al perito:**\n"
+        block += "\n".join(
+            f"{i}. {r.user_prompt}" for i, r in enumerate(report.recomendaciones, 1)
+        )
         block += "\n"
     block += _forensic_serial_dictamen_appendix(report)
     return f"{dictamen_text.rstrip()}{block}"

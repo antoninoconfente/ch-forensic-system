@@ -111,6 +111,7 @@ from utils.parsers import (
     _is_substantive_answer,
     executive_findings,
     parse_dictamen_sections,
+    pending_actionable_requests,
     unanswered_questions,
 )
 
@@ -1494,7 +1495,8 @@ def index_page():
                             ui.html(f"<div class='thumb-frame'><img src='{html.escape(w_src)}' alt='IMAGE 0{idx+1}'/></div>")
 
         det_alerts, _ = parse_dictamen_sections(dictamen_text)
-        pending_q = unanswered_questions(det_alerts, ficha)
+        pending_actionable = pending_actionable_requests(case_metadata, det_alerts)
+        pending_q = [req.user_prompt for req in pending_actionable]
         categorized = _deduplicate_and_Categorize_dictamen(dictamen_text)
         findings = executive_findings(dictamen_text)
 
@@ -1555,21 +1557,38 @@ def index_page():
 
                         render_physical_metrology_block(discipline_ctx)
 
-                        if pending_q and can_save_expedient():
+                        if pending_actionable and can_save_expedient():
                             ui.html("<span class='micro-coord mt-2'>/// RECOMENDACIONES Y ALERTAS</span>")
                             ans_widgets = {}
                             files_mem = {}
-                            for idx, question in enumerate(pending_q):
-                                human_q, rec_banner = _humanize_audit_question(question)
+                            for idx, req in enumerate(pending_actionable):
+                                type_label = {
+                                    "necesita_foto": "FOTO",
+                                    "necesita_medida": "MEDIDA",
+                                    "verificacion_visual": "VERIFICACIÓN",
+                                }.get(req.request_type, "PENDIENTE")
                                 with ui.column().classes("question-card w-full gap-2"):
-                                    if rec_banner:
-                                        ui.html(f"<p class='micro-coord text-[#8c6d28] m-0'>{html.escape(rec_banner)}</p>")
-                                    ui.markdown(f"**{to_roman(idx)}. {human_q}**")
-                                    opts = _choice_options(human_q)
+                                    ui.html(
+                                        f"<span class='micro-coord text-[#8c6d28] m-0'>{html.escape(type_label)}</span>"
+                                    )
+                                    ui.html(
+                                        f"<p class='m-0 text-[#141413] leading-relaxed'>"
+                                        f"<strong>{html.escape(to_roman(idx))}.</strong> "
+                                        f"{html.escape(req.user_prompt)}</p>"
+                                    )
+                                    opts = _choice_options(req.user_prompt)
+                                    placeholder = (
+                                        "Indique la medida en mm o gramos…"
+                                        if req.request_type == "necesita_medida"
+                                        else "Describa lo observado o aporte el dato solicitado…"
+                                    )
                                     if opts:
                                         ans_widgets[idx] = ui.select(opts, value="", label="Respuesta").classes("w-full")
                                     else:
-                                        ans_widgets[idx] = ui.input(label="Resultado observado", placeholder="Escribe el resultado...").classes("w-full")
+                                        ans_widgets[idx] = ui.input(
+                                            label="Respuesta",
+                                            placeholder=placeholder,
+                                        ).classes("w-full")
 
                                     def make_ficha_up(i):
                                         async def _up(e):
@@ -1579,7 +1598,16 @@ def index_page():
                                                 ui.notify("Evidencia complementaria cargada", type="positive")
                                         return _up
 
-                                    ui.upload(label="Foto de detalle opcional", auto_upload=True, on_upload=make_ficha_up(idx)).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+                                    upload_label = (
+                                        "Subir foto solicitada"
+                                        if req.request_type == "necesita_foto"
+                                        else "Foto de detalle opcional"
+                                    )
+                                    ui.upload(
+                                        label=upload_label,
+                                        auto_upload=True,
+                                        on_upload=make_ficha_up(idx),
+                                    ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
 
                             q_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
 
@@ -1601,7 +1629,7 @@ def index_page():
                                 refresh_ui()
 
                             editorial_button("ACTUALIZAR Y RECALCULAR", on_click=submit_ficha_q)
-                        elif pending_q and not can_save_expedient():
+                        elif pending_actionable and not can_save_expedient():
                             ui.html(
                                 "<p class='micro-coord text-[#625E57] m-0'>"
                                 "Hay recomendaciones de checkeo pendientes; solo analistas y administradores pueden consolidar respuestas."

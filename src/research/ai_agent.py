@@ -14,8 +14,13 @@ from src.research.visual_search import VisualSearchEngine
 from src.research.punchmarks_db import get_punchmarks_context_for_prompt
 
 try:
-    from agents.forensic_prompts import SERIAL_DECODING_DIRECTIVE, VISUAL_ANCHORING_DIRECTIVE
+    from agents.forensic_prompts import (
+        DOUBLE_BRAIN_DIRECTIVE,
+        SERIAL_DECODING_DIRECTIVE,
+        VISUAL_ANCHORING_DIRECTIVE,
+    )
 except ImportError:
+    DOUBLE_BRAIN_DIRECTIVE = ""
     SERIAL_DECODING_DIRECTIVE = ""
     VISUAL_ANCHORING_DIRECTIVE = ""
 
@@ -447,7 +452,8 @@ class LocalAIAgent:
             "   - No asumas por defecto origen europeo u occidental basándote únicamente en el estilo estético de la pieza.\n"
             "   - Inspecciona minuciosamente los caracteres grabados cruzándolos con el Diccionario Maestro de Punzones: diferencia estrictamente caracteres latinos, numeración arábiga, punzones gubernamentales (Japan Mint / kanjis / símbolos oficiales) o contrastes europeos (Estrella italiana, águila francesa, etc.).\n"
             "   - Si un punzón muestra rasgos asiáticos o símbolos no occidentales junto al título de ley (ej. 750 / K18), evalúa de manera prioritaria la orfebrería de exportación japonesa o asiática antes de forzar una atribución italiana.\n"
-            f"2. {VISUAL_ANCHORING_DIRECTIVE}\n"
+            f"2. {DOUBLE_BRAIN_DIRECTIVE}\n"
+            f"   {VISUAL_ANCHORING_DIRECTIVE}\n"
             "   PETICIÓN DE EVIDENCIA VISUAL (OBLIGATORIO SI HAY DUDA Y CERTEZA < 95%):\n"
             "   - Incluye la directiva exacta: `[FLAG_REQUEST_IMAGE: …]` describiendo el encuadre con anclaje visual (formas, colores, posición).\n"
             "   - Añade obligatoriamente la subsección titulada exactamente:\n"

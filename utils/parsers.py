@@ -482,3 +482,45 @@ def unanswered_questions(alerts_text: str, metadata: dict) -> list:
             continue
         pending.append(question)
     return pending
+
+
+def pending_actionable_requests(metadata: dict, alerts_text: str = "") -> list:
+    """
+    Peticiones pendientes del informe forense estructurado (solo user_prompt en UI).
+    Si no hay recomendaciones JSON, usa extracto legado del dictamen sin internal_reasoning.
+    """
+    try:
+        from agents.schemas import ActionableRequest
+    except ImportError:
+        return []
+
+    meta = metadata or {}
+    forensic = meta.get("forensic_report") or {}
+    answers = meta.get("question_answers") or {}
+    pending: list[ActionableRequest] = []
+
+    for item in forensic.get("recomendaciones") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            req = ActionableRequest.model_validate(item)
+        except Exception:
+            continue
+        if _is_substantive_answer(answers.get(req.user_prompt, "")):
+            continue
+        pending.append(req)
+
+    if pending:
+        return pending
+
+    for question in extract_questions_from_alerts(alerts_text or ""):
+        if _is_substantive_answer(answers.get(question, "")):
+            continue
+        pending.append(
+            ActionableRequest(
+                internal_reasoning="[Legado dictamen sin estructura ActionableRequest]",
+                user_prompt=question,
+                request_type="verificacion_visual",
+            )
+        )
+    return pending

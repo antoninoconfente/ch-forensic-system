@@ -16,6 +16,8 @@ from PIL import Image
 from pydantic import ValidationError
 
 from agents.forensic_prompts import (
+    DOUBLE_BRAIN_DIRECTIVE,
+    FORENSIC_JSON_ACTIONABLE_FIELDS,
     FORENSIC_JSON_SERIAL_FIELDS,
     SERIAL_DECODING_DIRECTIVE,
     VISUAL_ANCHORING_DIRECTIVE,
@@ -360,9 +362,11 @@ class UniversalForensicAgent:
             "new_protocol_insights solo si descubres criterios técnicos nuevos transferibles a futuros casos.\n\n"
             f"{SERIAL_DECODING_DIRECTIVE}\n\n"
             f"{FORENSIC_JSON_SERIAL_FIELDS}\n\n"
+            f"{DOUBLE_BRAIN_DIRECTIVE}\n\n"
+            f"{FORENSIC_JSON_ACTIONABLE_FIELDS}\n\n"
             f"{VISUAL_ANCHORING_DIRECTIVE}\n"
-            "Aplica anclaje visual en anomalies_detected, new_protocol_insights y cualquier verificación pendiente "
-            "del informe JSON (frases declarativas, nunca preguntas directas)."
+            "Usa anomalies_detected y new_protocol_insights solo para hallazgos técnicos; "
+            "las peticiones al usuario van en recomendaciones (ActionableRequest), nunca mezclando varias peticiones en un solo user_prompt."
         )
         prompt = (
             f"Caso {case_id}\n"
@@ -397,7 +401,8 @@ class UniversalForensicAgent:
                     repair_suffix = (
                         f"\n\n=== CORRECCIÓN OBLIGATORIA (validación esquema) ===\n{exc}\n"
                         "Si has_factory_serial=true, serial_decoding debe incluir los cuatro campos "
-                        "y serial_authenticity_impact debe contener valida, contradice o indeterminado."
+                        "y serial_authenticity_impact debe contener valida, contradice o indeterminado. "
+                        "recomendaciones debe ser lista de ActionableRequest válidos (un user_prompt = una petición)."
                     )
                     raw = self._generate_json(system, prompt + repair_suffix, image_paths)
                     if not raw:

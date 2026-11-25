@@ -19,6 +19,21 @@ Si detectas un número de serie, edición limitada o código de fábrica en la p
 - Explicar explícitamente si el serial VALIDA, CONTRADICE o deja INDETERMINADO el relato de autenticidad de la pieza, con razonamiento pericial citando el dato observado.
 """
 
+DOUBLE_BRAIN_DIRECTIVE = """
+DOBLE CEREBRO — ActionableRequest (OBLIGATORIO EN JSON recomendaciones):
+- Fase 1 — internal_reasoning: deduce técnicamente qué falta (punzones, sulfatación, aleación, medida concreta). Solo para el sistema; nunca debe filtrarse a la UI.
+- Fase 2 — user_prompt: traduce a UNA sola instrucción visual y sencilla para el humano, anclada a formas/colores/posiciones de la foto aportada.
+REGLA DE ORO: Un ActionableRequest = UNA SOLA COSA. Nunca agrupes peso, medidas y fotos en el mismo user_prompt.
+ANCLAJE VISUAL en user_prompt: prohibido virola, bisel, corona, fuste, líneas de Schreger u otra jerga sin traducción visual.
+request_type: "necesita_foto" | "necesita_medida" | "verificacion_visual" según la acción principal.
+Si no hay pendientes, devuelve recomendaciones: [].
+"""
+
+FORENSIC_JSON_ACTIONABLE_FIELDS = """
+recomendaciones: lista de objetos ActionableRequest con internal_reasoning, user_prompt y request_type.
+Cada elemento es una petición atómica. Rellena recomendaciones siempre que la confianza < 95% o falte evidencia crítica.
+"""
+
 FORENSIC_JSON_SERIAL_FIELDS = """
 Cuando exista serie, referencia de fábrica o edición limitada legible:
 - has_factory_serial: true (obligatorio)

@@ -2,9 +2,11 @@
 
 import re
 import unicodedata
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+ActionableRequestType = Literal["necesita_foto", "necesita_medida", "verificacion_visual"]
 
 SERIAL_DECODING_FIELD_KEYS: tuple[str, ...] = (
     "serial_number_raw",
@@ -78,6 +80,34 @@ class DimensionsMm(BaseModel):
     diameter: float | None = Field(default=None, description="Diámetro en mm")
 
 
+class ActionableRequest(BaseModel):
+    """Doble cerebro: razonamiento forense interno + petición visible al usuario."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    internal_reasoning: str = Field(
+        description=(
+            "Fase 1: Razonamiento forense técnico. Invisible para el usuario final."
+        ),
+    )
+    user_prompt: str = Field(
+        description=(
+            "Fase 2: Una sola petición clara con anclaje visual (colores/formas de la foto)."
+        ),
+    )
+    request_type: ActionableRequestType = Field(
+        description="Tipo de acción solicitada al usuario.",
+    )
+
+    @field_validator("internal_reasoning", "user_prompt")
+    @classmethod
+    def strip_nonempty(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("ActionableRequest requiere texto no vacío")
+        return text
+
+
 class SynthesizedRubric(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -114,6 +144,10 @@ class ForensicReport(BaseModel):
     new_protocol_insights: list[str] = Field(default_factory=list)
     confidence_score: int = Field(default=0, ge=0, le=100)
     technical_summary: str = ""
+    recomendaciones: list[ActionableRequest] = Field(
+        default_factory=list,
+        description="Peticiones de información adicional (doble cerebro).",
+    )
 
     @field_validator("taxonomy_key")
     @classmethod
@@ -144,6 +178,15 @@ class ForensicReport(BaseModel):
             if all(str(attrs.get(k) or "").strip() for k in SERIAL_DECODING_FIELD_KEYS):
                 data["serial_decoding"] = {k: str(attrs[k]).strip() for k in SERIAL_DECODING_FIELD_KEYS}
         data["key_attributes"] = attrs
+
+        raw_recs = data.get("recomendaciones")
+        if raw_recs is None:
+            data["recomendaciones"] = []
+        elif isinstance(raw_recs, list):
+            data["recomendaciones"] = [item for item in raw_recs if isinstance(item, dict)]
+        else:
+            data["recomendaciones"] = []
+
         return data
 
     @model_validator(mode="after")
