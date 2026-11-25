@@ -79,6 +79,7 @@ from auth.supabase_auth import (
     can_manage_lots,
     can_save_expedient,
     get_current_role,
+    is_admin_user,
     is_authenticated,
     role_display_label,
     sign_out,
@@ -87,11 +88,13 @@ from ui.theme import EDITORIAL_CSS, editorial_button, _web_img_src
 from ui.views.login import build_login_page
 from ui.blueprints import _infer_cad_defaults_from_dictamen
 from ui.detail_discipline import (
+    render_black_box_audit_trail,
     render_gemology_calculator,
     render_gemology_empty_state,
     render_jewelry_cad_laboratory,
     render_logistics_arbitrage_report,
     render_physical_metrology_block,
+    render_public_ficha_spec_table,
 )
 from utils.discipline import (
     is_jewelry_or_gemology,
@@ -663,16 +666,31 @@ def commit_ficha_answers(case_id: str, case_folder: str, metadata: dict, pending
     images = _analysis_image_paths(case_id, stored.get("evidence_urls") or [], allow_network=allow_net)
     images.extend(new_locals)
     prompt_ctx = (updated_state.get("prompt_context") or "") + "\n\n" + JEWELRY_RIGOR_INSTRUCTIONS
-    updated = agent.analyze_evidence(
-        object_description=stored.get("object_description", "Pieza peritada"),
-        context_notes=prompt_ctx,
-        image_paths=images,
-        case_id=case_id,
-        persist_case=False,
+    prior_forensic = dict(stored.get("forensic_report") or {})
+    investigation = expert_council.run_investigation(
+        stored.get("custom_title") or stored.get("object_description", "Pieza peritada"),
+        prompt_ctx,
+        images,
+        case_id,
+        agent,
+        JEWELRY_RIGOR_INSTRUCTIONS,
+        prior_forensic_report=prior_forensic,
     )
+    updated = investigation.get("dictamen_text") or ""
     if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
         return updated
     stored["dictamen_text"] = updated
+    extras = investigation.get("draft_extras") or {}
+    if investigation.get("forensic_report"):
+        stored["forensic_report"] = investigation["forensic_report"]
+    elif extras.get("forensic_report"):
+        stored["forensic_report"] = extras["forensic_report"]
+    if extras.get("market_valuation_report"):
+        stored["market_valuation_report"] = extras["market_valuation_report"]
+    if extras.get("logistics_arbitrage_report"):
+        stored["logistics_arbitrage_report"] = extras["logistics_arbitrage_report"]
+    if extras.get("cad_blueprint"):
+        stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
     if case_id in _DRAFT_CASES:
         stored["local_image_paths"] = list(images)
         stored["evidence_urls"] = list(images)
@@ -1504,6 +1522,29 @@ def index_page():
         categorized = _deduplicate_and_Categorize_dictamen(dictamen_text)
         findings = executive_findings(dictamen_text)
 
+        ficha_rows_list = [
+            ("Marca / Casa", maker),
+            ("Objeto", real_title),
+        ]
+        disc = resolve_discipline_label(discipline_ctx)
+        mats = resolve_materials_label(discipline_ctx)
+        if spec_value_is_present(disc):
+            ficha_rows_list.append(("Disciplina", disc))
+        if spec_value_is_present(mats):
+            ficha_rows_list.append(("Materiales", mats))
+        for lbl, val in serial_decoding_ficha_rows(discipline_ctx):
+            ficha_rows_list.append((lbl, val))
+        for lbl, val in [
+            ("Liquidación", val_info.get("wholesale")),
+            ("Subasta", val_info.get("auction")),
+            ("Mercado Minorista", val_info.get("retail")),
+        ]:
+            if spec_value_is_present(val):
+                ficha_rows_list.append((lbl, val))
+        for lbl, val in findings:
+            if spec_value_is_present(val):
+                ficha_rows_list.append((lbl, val))
+
         active_tab = state.get("detail_tab", "sintesis")
 
         def set_tab(t_name: str):
@@ -1512,11 +1553,12 @@ def index_page():
 
         with ui.row().classes("w-full border-b border-[#141413] gap-2 pt-2"):
             tabs_def = [
-                ("sintesis", "I · SÍNTESIS & METROLOGÍA"),
-                ("gemologia", "II · GEMOLOGÍA & METALES PRECIOSOS"),
-                ("mercado", "III · TASACIÓN & BUYER SEARCH"),
-                ("herramientas", "IV · LOGÍSTICA & ARBITRAJE"),
-                ("forense", "V · DOSSIER TÉCNICO COMPLETO"),
+                ("sintesis", "I · SÍNTESIS Y DICTAMEN"),
+                ("auditoria", "II · MESA DE AUDITORÍA"),
+                ("gemologia", "III · GEMOLOGÍA & METALES PRECIOSOS"),
+                ("mercado", "IV · TASACIÓN & BUYER SEARCH"),
+                ("herramientas", "V · LOGÍSTICA & ARBITRAJE"),
+                ("forense", "VI · DOSSIER TÉCNICO COMPLETO"),
             ]
             for t_key, t_label in tabs_def:
                 cls = "editorial-tab editorial-tab-active" if active_tab == t_key else "editorial-tab"
@@ -1527,102 +1569,97 @@ def index_page():
 
         with ui.column().classes("w-full py-8 gap-6"):
             if active_tab == "sintesis":
-                with ui.row().classes("w-full grid grid-cols-1 lg:grid-cols-12 gap-10 items-start"):
-                    with ui.column().classes("lg:col-span-5 w-full gap-5"):
-                        ui.html("<span class='micro-coord'>/// FICHA TÉCNICA RESUMIDA</span>")
-                        rows_list = [
-                            ("Marca / Casa", maker),
-                            ("Objeto", real_title),
-                        ]
-                        disc = resolve_discipline_label(discipline_ctx)
-                        mats = resolve_materials_label(discipline_ctx)
-                        if spec_value_is_present(disc):
-                            rows_list.append(("Disciplina", disc))
-                        if spec_value_is_present(mats):
-                            rows_list.append(("Materiales", mats))
-                        for lbl, val in serial_decoding_ficha_rows(discipline_ctx):
-                            rows_list.append((lbl, val))
-                        for lbl, val in [
-                            ("Liquidación", val_info.get("wholesale")),
-                            ("Subasta", val_info.get("auction")),
-                            ("Mercado Minorista", val_info.get("retail")),
-                        ]:
-                            if spec_value_is_present(val):
-                                rows_list.append((lbl, val))
-                        for lbl, val in findings:
-                            if spec_value_is_present(val):
-                                rows_list.append((lbl, val))
-                        rows_html = "".join(
-                            f"<div class='spec-row'><span class='spec-label'>{html.escape(lbl)}</span><span class='spec-value'>{html.escape(str(val))}</span></div>"
-                            for lbl, val in rows_list
-                            if spec_value_is_present(val)
+                with ui.column().classes("w-full gap-8 max-w-4xl"):
+                    ui.html("<span class='micro-coord'>LECTURA PERICIAL — SIN EDICIÓN</span>")
+                    ui.markdown(categorized.get("sintesis") or dictamen_text).classes(
+                        "editorial-reader w-full"
+                    )
+                    if categorized.get("mercado"):
+                        ui.html("<span class='micro-coord mt-2'>VALORACIÓN Y COINCIDENCIAS DE MERCADO</span>")
+                        ui.markdown(categorized["mercado"]).classes("editorial-reader w-full")
+
+            elif active_tab == "auditoria":
+                with ui.column().classes("w-full gap-8 max-w-4xl"):
+                    ui.html("<span class='micro-coord'>/// FICHA TÉCNICA</span>")
+                    render_public_ficha_spec_table(ficha_rows_list)
+                    render_physical_metrology_block(discipline_ctx)
+
+                    if is_admin_user():
+                        render_black_box_audit_trail(discipline_ctx)
+
+                    ui.html("<span class='micro-coord mt-2'>/// RESOLUCIÓN DE DUDAS ACTIVAS</span>")
+                    if not pending_actionable:
+                        ui.html(
+                            "<p class='micro-coord text-[#625E57] m-0'>"
+                            "No hay peticiones pendientes del perito en este expediente.</p>"
                         )
-                        ui.html(f"<div class='spec-table'>{rows_html}</div>")
+                    else:
+                        mesa_files_mem: dict[int, tuple[str, bytes]] = {}
+                        mesa_widgets: dict = {}
 
-                        render_physical_metrology_block(discipline_ctx)
+                        for idx, rec in enumerate(pending_actionable):
+                            user_prompt = str(rec.get("user_prompt", "") or "").strip()
+                            request_type = str(
+                                rec.get("request_type", "verificacion_visual") or "verificacion_visual"
+                            )
+                            if not user_prompt:
+                                continue
+                            prior_answer = (ficha.get("question_answers") or {}).get(user_prompt, "")
+                            with ui.column().classes("question-card w-full gap-2"):
+                                ui.html(
+                                    f"<p class='m-0 text-[#141413] leading-relaxed'>"
+                                    f"<strong>{html.escape(to_roman(idx))}.</strong> "
+                                    f"{html.escape(user_prompt)}</p>"
+                                )
+                                opts = _choice_options(user_prompt)
+                                placeholder = (
+                                    "Indique la medida en mm o gramos…"
+                                    if request_type == "necesita_medida"
+                                    else "Describa lo observado o aporte el dato solicitado…"
+                                )
+                                if opts:
+                                    mesa_widgets[idx] = ui.select(
+                                        opts,
+                                        value=prior_answer if prior_answer in opts else "",
+                                        label="Respuesta",
+                                    ).classes("w-full")
+                                else:
+                                    mesa_widgets[idx] = ui.input(
+                                        label="Respuesta",
+                                        value=prior_answer or "",
+                                        placeholder=placeholder,
+                                    ).classes("w-full")
 
-                        if pending_actionable and can_save_expedient():
-                            ui.html("<span class='micro-coord mt-2'>/// RECOMENDACIONES Y ALERTAS</span>")
-                            ans_widgets = {}
-                            files_mem = {}
-                            for idx, rec in enumerate(pending_actionable):
-                                user_prompt = str(rec.get("user_prompt", "") or "").strip()
-                                request_type = str(rec.get("request_type", "verificacion_visual") or "verificacion_visual")
-                                if not user_prompt:
-                                    continue
-                                type_label = {
-                                    "necesita_foto": "FOTO",
-                                    "necesita_medida": "MEDIDA",
-                                    "verificacion_visual": "VERIFICACIÓN",
-                                }.get(request_type, "PENDIENTE")
-                                with ui.column().classes("question-card w-full gap-2"):
-                                    ui.html(
-                                        f"<span class='micro-coord text-[#8c6d28] m-0'>{html.escape(type_label)}</span>"
-                                    )
-                                    ui.html(
-                                        f"<p class='m-0 text-[#141413] leading-relaxed'>"
-                                        f"<strong>{html.escape(to_roman(idx))}.</strong> "
-                                        f"{html.escape(user_prompt)}</p>"
-                                    )
-                                    opts = _choice_options(user_prompt)
-                                    placeholder = (
-                                        "Indique la medida en mm o gramos…"
-                                        if request_type == "necesita_medida"
-                                        else "Describa lo observado o aporte el dato solicitado…"
-                                    )
-                                    if opts:
-                                        ans_widgets[idx] = ui.select(opts, value="", label="Respuesta").classes("w-full")
-                                    else:
-                                        ans_widgets[idx] = ui.input(
-                                            label="Respuesta",
-                                            placeholder=placeholder,
-                                        ).classes("w-full")
+                                def make_mesa_up(i):
+                                    async def _up(e):
+                                        fname, fbytes = await _extract_upload_bytes(e)
+                                        if fbytes:
+                                            mesa_files_mem[i] = (fname, fbytes)
+                                            ui.notify("Evidencia asociada a esta petición", type="positive")
+                                    return _up
 
-                                    def make_ficha_up(i):
-                                        async def _up(e):
-                                            fname, fbytes = await _extract_upload_bytes(e)
-                                            if fbytes:
-                                                files_mem[i] = (fname, fbytes)
-                                                ui.notify("Evidencia complementaria cargada", type="positive")
-                                        return _up
+                                upload_label = (
+                                    "Subir foto solicitada"
+                                    if request_type == "necesita_foto"
+                                    else "Foto de detalle opcional"
+                                )
+                                ui.upload(
+                                    label=upload_label,
+                                    auto_upload=True,
+                                    on_upload=make_mesa_up(idx),
+                                ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
 
-                                    upload_label = (
-                                        "Subir foto solicitada"
-                                        if request_type == "necesita_foto"
-                                        else "Foto de detalle opcional"
-                                    )
-                                    ui.upload(
-                                        label=upload_label,
-                                        auto_upload=True,
-                                        on_upload=make_ficha_up(idx),
-                                    ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+                        if can_save_expedient() and mesa_widgets:
+                            mesa_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
 
-                            q_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
-
-                            async def submit_ficha_q():
-                                q_status.text = "⏳ CONSOLIDANDO RESPUESTAS EN SEGUNDO PLANO..."
-                                q_status.classes(remove="hidden")
-                                answers_dict = {i: (w.value or "") for i, w in ans_widgets.items()}
+                            async def submit_mesa_master() -> None:
+                                mesa_status.text = (
+                                    "⏳ ACTUALIZANDO EXPEDIENTE Y RECALCULANDO PERITAJE…"
+                                )
+                                mesa_status.classes(remove="hidden")
+                                answers_dict = {
+                                    i: (w.value or "") for i, w in mesa_widgets.items()
+                                }
                                 updated = await run.io_bound(
                                     commit_ficha_answers,
                                     case_id,
@@ -1630,23 +1667,25 @@ def index_page():
                                     ficha,
                                     pending_q,
                                     answers_dict,
-                                    files_mem,
+                                    mesa_files_mem,
                                 )
+                                if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
+                                    ui.notify(str(updated), type="negative")
+                                    return
                                 state["last_dictamen"] = updated
-                                ui.notify("Ficha actualizada y dictamen recalculado", type="positive")
+                                ui.notify("Expediente actualizado y peritaje recalculado", type="positive")
                                 refresh_ui()
 
-                            editorial_button("ACTUALIZAR Y RECALCULAR", on_click=submit_ficha_q)
+                            ui.button(
+                                "Actualizar Expediente y Recalcular",
+                                on_click=submit_mesa_master,
+                            ).props("color=primary").classes("w-full mt-4")
+                            mesa_status
                         elif pending_actionable and not can_save_expedient():
                             ui.html(
                                 "<p class='micro-coord text-[#625E57] m-0'>"
-                                "Hay recomendaciones de checkeo pendientes; solo analistas y administradores pueden consolidar respuestas."
-                                "</p>"
+                                "Resolución de dudas reservada a analistas y administradores.</p>"
                             )
-
-                    with ui.column().classes("lg:col-span-7 w-full gap-3"):
-                        ui.html("<span class='micro-coord'>IDENTIFICACIÓN FORMAL Y VEREDICTO DE AUTENTICIDAD</span>")
-                        ui.markdown(categorized["sintesis"]).classes("editorial-reader w-full")
 
             elif active_tab == "gemologia":
                 jewelry_ui_state = {

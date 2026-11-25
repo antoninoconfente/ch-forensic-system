@@ -148,6 +148,23 @@ class ForensicReport(BaseModel):
         default_factory=list,
         description="Peticiones de información adicional (doble cerebro).",
     )
+    global_audit_trail: list[str] = Field(
+        default_factory=list,
+        description=(
+            "CAJA NEGRA (Solo Admin): Registro inmutable de decisiones. Documenta aquí el impacto "
+            "de cualquier dato nuevo. Ej: 'El usuario confirmó 16mm de cota Z. Impacto: Se valida Ref. "
+            "11071, aumentando certeza pericial al 92% y subiendo valoración a 550€'."
+        ),
+    )
+
+    @field_validator("global_audit_trail", mode="before")
+    @classmethod
+    def coerce_global_audit_trail(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(x).strip() for x in value if str(x).strip()]
 
     @field_validator("taxonomy_key")
     @classmethod
@@ -186,6 +203,9 @@ class ForensicReport(BaseModel):
             data["recomendaciones"] = [item for item in raw_recs if isinstance(item, dict)]
         else:
             data["recomendaciones"] = []
+
+        if data.get("global_audit_trail") is None:
+            data["global_audit_trail"] = []
 
         return data
 

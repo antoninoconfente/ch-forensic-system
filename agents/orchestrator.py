@@ -19,6 +19,19 @@ from utils.markdown_format import renumber_markdown_headers
 from src.research.ai_agent import LocalAIAgent
 
 
+def merge_global_audit_trail(prior: dict | ForensicReport | None, report: ForensicReport) -> ForensicReport:
+    """Concatena la caja negra previa con entradas nuevas (sin sobrescribir historial)."""
+    prior_entries: list[str] = []
+    if isinstance(prior, ForensicReport):
+        prior_entries = [str(x).strip() for x in (prior.global_audit_trail or []) if str(x).strip()]
+    elif isinstance(prior, dict):
+        prior_entries = [
+            str(x).strip() for x in (prior.get("global_audit_trail") or []) if str(x).strip()
+        ]
+    new_entries = [str(x).strip() for x in (report.global_audit_trail or []) if str(x).strip()]
+    return report.model_copy(update={"global_audit_trail": prior_entries + new_entries})
+
+
 def _forensic_report_dict(report: ForensicReport) -> dict:
     data = report.model_dump()
     if not data.get("parent_domain"):
@@ -137,6 +150,7 @@ def _forensic_protocol_block(report: ForensicReport, rubric_version: int | None 
             + user_lines
             + "\n"
         )
+    # global_audit_trail: no se inyecta al dictamen legacy (caja negra solo admin / JSON persistido).
     return base
 
 
@@ -324,6 +338,7 @@ class ExpertCouncilOrchestrator:
         case_id: str,
         legacy_agent: LocalAIAgent | None = None,
         supplemental_instructions: str = "",
+        prior_forensic_report: dict | None = None,
     ) -> dict:
         agent = legacy_agent or self.legacy_agent
         if agent is None:
@@ -404,6 +419,9 @@ class ExpertCouncilOrchestrator:
             case_id=case_id,
             persist_case=False,
         )
+
+        if parsed_forensic is not None and prior_forensic_report:
+            parsed_forensic = merge_global_audit_trail(prior_forensic_report, parsed_forensic)
 
         if parsed_forensic is not None:
             dictamen_text = _append_forensic_dictamen(dictamen_text, parsed_forensic)

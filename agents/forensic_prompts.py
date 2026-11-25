@@ -34,6 +34,17 @@ recomendaciones: lista de objetos ActionableRequest con internal_reasoning, user
 Cada elemento es una petición atómica. Rellena recomendaciones siempre que la confianza < 95% o falte evidencia crítica.
 """
 
+GLOBAL_AUDIT_TRAIL_DIRECTIVE = """
+MODO AUDITOR (GLOBAL AUDIT TRAIL):
+- Tienes un registro oculto llamado global_audit_trail (lista de strings en el JSON ForensicReport). Es obligatorio documentar ahí CUALQUIER decisión técnica que tomes. Si un usuario te proporciona un dato nuevo (medida, peso, foto), registra en el Audit Trail exactamente cómo ese dato ha alterado tu certeza pericial, la tasación económica o el descarte de falsificaciones.
+- SEPARACIÓN DE PÚBLICO: Nunca menciones en el user_prompt de las recomendaciones cómo cambian los precios o la confianza. Esa información técnica y de impacto económico va EXCLUSIVAMENTE al global_audit_trail.
+- PREGUNTAS ACTIVAS: Si el usuario ya ha respondido a una duda (ej. ya te dio el peso), NO vuelvas a pedir ese dato en recomendaciones. Usa el dato, audítalo en la Caja Negra, y pide solo lo que falte.
+"""
+
+FORENSIC_JSON_AUDIT_TRAIL_FIELDS = """
+global_audit_trail: lista de strings (puede iniciar vacía). Cada línea = evento de auditoría con dato recibido o decisión tomada e impacto explícito (certeza %, valoración EUR, autenticidad). No duplicar en recomendaciones ni technical_summary orientado al usuario.
+"""
+
 FORENSIC_JSON_SERIAL_FIELDS = """
 Cuando exista serie, referencia de fábrica o edición limitada legible:
 - has_factory_serial: true (obligatorio)

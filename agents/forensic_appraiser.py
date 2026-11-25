@@ -18,7 +18,9 @@ from pydantic import ValidationError
 from agents.forensic_prompts import (
     DOUBLE_BRAIN_DIRECTIVE,
     FORENSIC_JSON_ACTIONABLE_FIELDS,
+    FORENSIC_JSON_AUDIT_TRAIL_FIELDS,
     FORENSIC_JSON_SERIAL_FIELDS,
+    GLOBAL_AUDIT_TRAIL_DIRECTIVE,
     SERIAL_DECODING_DIRECTIVE,
     VISUAL_ANCHORING_DIRECTIVE,
 )
@@ -364,9 +366,12 @@ class UniversalForensicAgent:
             f"{FORENSIC_JSON_SERIAL_FIELDS}\n\n"
             f"{DOUBLE_BRAIN_DIRECTIVE}\n\n"
             f"{FORENSIC_JSON_ACTIONABLE_FIELDS}\n\n"
+            f"{GLOBAL_AUDIT_TRAIL_DIRECTIVE}\n\n"
+            f"{FORENSIC_JSON_AUDIT_TRAIL_FIELDS}\n\n"
             f"{VISUAL_ANCHORING_DIRECTIVE}\n"
             "Usa anomalies_detected y new_protocol_insights solo para hallazgos técnicos; "
-            "las peticiones al usuario van en recomendaciones (ActionableRequest), nunca mezclando varias peticiones en un solo user_prompt."
+            "las peticiones al usuario van en recomendaciones (ActionableRequest), nunca mezclando varias peticiones en un solo user_prompt. "
+            "El impacto económico y de confianza solo en global_audit_trail."
         )
         prompt = (
             f"Caso {case_id}\n"

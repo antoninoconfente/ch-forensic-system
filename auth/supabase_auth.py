@@ -100,6 +100,11 @@ def can_save_expedient() -> bool:
     return get_current_role() in {"admin", "analyst"}
 
 
+def is_admin_user() -> bool:
+    """Caja negra y operaciones de auditoría restringidas a administradores."""
+    return get_current_role() == "admin"
+
+
 def can_delete_in_archive() -> bool:
     return get_current_role() == "admin"
 

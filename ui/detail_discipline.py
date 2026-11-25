@@ -128,6 +128,48 @@ def render_logistics_arbitrage_report(report: dict, val_display: str) -> None:
         ui.html(f"<div class='spec-table w-full mt-2'>{body}</div>")
 
 
+def render_public_ficha_spec_table(rows: list[tuple[str, str]]) -> None:
+    """Tabla editorial de ficha técnica (Mesa de Auditoría — bloque público)."""
+    visible = [(lbl, val) for lbl, val in rows if spec_value_is_present(val)]
+    if not visible:
+        ui.html(
+            "<p class='micro-coord text-[#625E57] m-0'>Sin atributos técnicos consolidados en esta fase.</p>"
+        )
+        return
+    rows_html = "".join(
+        f"<div class='spec-row'><span class='spec-label'>{html.escape(lbl)}</span>"
+        f"<span class='spec-value'>{html.escape(str(val))}</span></div>"
+        for lbl, val in visible
+    )
+    ui.html(f"<div class='spec-table w-full'>{rows_html}</div>")
+
+
+def render_black_box_audit_trail(case_data: dict) -> None:
+    """Caja negra: solo debe invocarse si el llamador ya validó permisos admin."""
+    forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}
+    trail = forensic.get("global_audit_trail") or []
+    entries = [str(x).strip() for x in trail if str(x).strip()]
+    with ui.column().classes(
+        "w-full gap-3 p-4 border border-[#1a1a18] bg-[#1c1917] text-[#e7e5e4]"
+    ):
+        ui.html(
+            "<span class='micro-coord' style='color:#a8a29e'>"
+            "🕵️ REGISTRO DE IMPACTO (CAJA NEGRA)</span>"
+        )
+        if not entries:
+            ui.html(
+                "<p class='m-0 text-[11px] font-mono text-[#a8a29e]'>"
+                "Sin entradas de auditoría en este expediente.</p>"
+            )
+            return
+        body = "".join(
+            f"<p class='m-0 mb-2 text-[11px] leading-relaxed font-mono text-[#d6d3d1]'>"
+            f"• {html.escape(line)}</p>"
+            for line in entries
+        )
+        ui.html(body)
+
+
 def render_gemology_empty_state() -> None:
   """Estado vacío Quiet Luxury cuando el laboratorio gemológico no aplica."""
   with ui.column().classes("w-full items-center justify-center py-20 gap-5"):
