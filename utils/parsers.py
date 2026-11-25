@@ -474,7 +474,7 @@ def _choice_options(question: str):
 
 def unanswered_questions(alerts_text: str, metadata: dict) -> list:
     answers = metadata.get("question_answers") or {}
-    questions = [question for question in extract_questions_from_alerts(alerts_text) if "?" in question]
+    questions = extract_questions_from_alerts(alerts_text)
     pending = []
     for question in questions:
         stored = answers.get(question, "")

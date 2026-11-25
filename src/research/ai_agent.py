@@ -14,9 +14,10 @@ from src.research.visual_search import VisualSearchEngine
 from src.research.punchmarks_db import get_punchmarks_context_for_prompt
 
 try:
-    from agents.forensic_prompts import SERIAL_DECODING_DIRECTIVE
+    from agents.forensic_prompts import SERIAL_DECODING_DIRECTIVE, VISUAL_ANCHORING_DIRECTIVE
 except ImportError:
     SERIAL_DECODING_DIRECTIVE = ""
+    VISUAL_ANCHORING_DIRECTIVE = ""
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -446,12 +447,13 @@ class LocalAIAgent:
             "   - No asumas por defecto origen europeo u occidental basándote únicamente en el estilo estético de la pieza.\n"
             "   - Inspecciona minuciosamente los caracteres grabados cruzándolos con el Diccionario Maestro de Punzones: diferencia estrictamente caracteres latinos, numeración arábiga, punzones gubernamentales (Japan Mint / kanjis / símbolos oficiales) o contrastes europeos (Estrella italiana, águila francesa, etc.).\n"
             "   - Si un punzón muestra rasgos asiáticos o símbolos no occidentales junto al título de ley (ej. 750 / K18), evalúa de manera prioritaria la orfebrería de exportación japonesa o asiática antes de forzar una atribución italiana.\n"
-            "2. PETICIÓN DE EVIDENCIA VISUAL Y ORÁCULO PROACTIVO (OBLIGATORIO SI HAY DUDA):\n"
-            "   - Si la certeza pericial es inferior al 95% debido a falta de visibilidad óptica en punzones o mecanismos:\n"
-            "     a) Incluye la directiva exacta: `[FLAG_REQUEST_IMAGE: Descripción exacta de la macrofotografía o ángulo adicional requerido]`.\n"
-            "     b) Añade obligatoriamente una subsección numerada titulada exactamente:\n"
-            "        `### ❓ PREGUNTAS CLAVE PARA EL PERITO / USUARIO`\n"
-            "        formulando preguntas numeradas individualmente orientadas a resolver las incertidumbres restantes.\n"
+            f"2. {VISUAL_ANCHORING_DIRECTIVE}\n"
+            "   PETICIÓN DE EVIDENCIA VISUAL (OBLIGATORIO SI HAY DUDA Y CERTEZA < 95%):\n"
+            "   - Incluye la directiva exacta: `[FLAG_REQUEST_IMAGE: …]` describiendo el encuadre con anclaje visual (formas, colores, posición).\n"
+            "   - Añade obligatoriamente la subsección titulada exactamente:\n"
+            "        `### 📷 RECOMENDACIONES DE AUDITORÍA VISUAL`\n"
+            "     con ítems numerados en tono de nota pericial (sin signos de interrogación ni preguntas directas), "
+            "cada uno indicando qué zona visible de la pieza medir, fotografiar o contrastar y cómo delimitarla en la imagen.\n"
             "3. RESTRICCIÓN DE GRAMAJE Y VALORACIÓN:\n"
             "   - Si se especifica un peso real medido en balanza en las notas del perito, utilízalo como verdad absoluta para el cálculo de metales. Si no se especifica, prohíbete fijar un valor de fundición absoluto y especifica explícitamente: '[PENDIENTE DE PESAJE FÍSICO EXACTO]'.\n\n"
             f"{SERIAL_DECODING_DIRECTIVE}\n"
@@ -462,7 +464,7 @@ class LocalAIAgent:
             f"- Objeto: {object_description}\n"
             f"- Inscripciones/Cuños/Dotación confirmados: {clean_context}\n\n"
             "REGLAS OBLIGATORIAS DE EVALUACIÓN, TASACIÓN Y ESTRATEGIA DE MERCADO:\n"
-            "1. ⚠️ ALERTAS DE EXCEPCIÓN Y AUDITORÍA PERICIAL (Incluye aquí los Flags y las preguntas clave numeradas pendientes).\n"
+            "1. ⚠️ ALERTAS DE EXCEPCIÓN Y AUDITORÍA PERICIAL (Incluye Flags `[FLAG_REQUEST_IMAGE: …]` y recomendaciones de auditoría visual ancladas; nunca checklists interrogativos).\n"
             "2. 📌 IDENTIFICACIÓN FORMAL\n"
             "3. 🔬 ANÁLISIS TÉCNICO, MORFOLÓGICO Y DE MICRO-PUNZONES\n"
             "4. 📜 CATALOGACIÓN HISTÓRICA Y CONTRASTES DE ORFEBRERÍA\n"
@@ -488,7 +490,7 @@ class LocalAIAgent:
             f"Inscripciones y notas confirmadas: {clean_context}\n"
             "Genera el dictamen pericial definitivo aplicando el Diccionario Maestro de Punzones, la decodificación activa de números de serie "
             "(DATACIÓN + VERIFICACIÓN DE AUTENTICIDAD con juicio explícito valida/contradice/indeterminado), "
-            "el protocolo anti-alucinación, la gestión de excepciones con preguntas guía numeradas, tasación con precios spot y Buyer Search."
+            "el protocolo anti-alucinación, el anclaje visual en alertas y recomendaciones pendientes, tasación con precios spot y Buyer Search."
         )
         contents.append(prompt_text)
 

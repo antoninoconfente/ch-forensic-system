@@ -15,7 +15,11 @@ from google.genai import types
 from PIL import Image
 from pydantic import ValidationError
 
-from agents.forensic_prompts import FORENSIC_JSON_SERIAL_FIELDS, SERIAL_DECODING_DIRECTIVE
+from agents.forensic_prompts import (
+    FORENSIC_JSON_SERIAL_FIELDS,
+    SERIAL_DECODING_DIRECTIVE,
+    VISUAL_ANCHORING_DIRECTIVE,
+)
 from agents.schemas import (
     ForensicReport,
     SynthesizedRubric,
@@ -299,7 +303,10 @@ class UniversalForensicAgent:
             "Eres arquitecto de protocolos forenses universales. Genera una rúbrica completa para la taxonomía "
             "indicada sin suponer otra disciplina. Devuelve SOLO JSON válido SynthesizedRubric con: taxonomy_key, "
             "parent_domain, display_name, inspection_checklist (lista de strings), authenticity_red_flags (lista), "
-            "cad_measurement_guide (texto con vistas y cotas que el plano CAD debe proyectar para esta disciplina)."
+            "cad_measurement_guide (texto con vistas y cotas que el plano CAD debe proyectar para esta disciplina).\n\n"
+            f"{VISUAL_ANCHORING_DIRECTIVE}\n"
+            "Cada ítem de inspection_checklist y authenticity_red_flags debe ser una nota de auditoría visual anclada "
+            "(sin preguntas ni interrogantes)."
         )
         prompt = (
             f"Taxonomía: {taxonomy.taxonomy_key} — familia {taxonomy.parent_domain} — {taxonomy.display_name}\n"
@@ -352,7 +359,10 @@ class UniversalForensicAgent:
             "incluyendo dimensions_mm (length, width, height, diameter en mm o null), "
             "new_protocol_insights solo si descubres criterios técnicos nuevos transferibles a futuros casos.\n\n"
             f"{SERIAL_DECODING_DIRECTIVE}\n\n"
-            f"{FORENSIC_JSON_SERIAL_FIELDS}"
+            f"{FORENSIC_JSON_SERIAL_FIELDS}\n\n"
+            f"{VISUAL_ANCHORING_DIRECTIVE}\n"
+            "Aplica anclaje visual en anomalies_detected, new_protocol_insights y cualquier verificación pendiente "
+            "del informe JSON (frases declarativas, nunca preguntas directas)."
         )
         prompt = (
             f"Caso {case_id}\n"
