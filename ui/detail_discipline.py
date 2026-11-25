@@ -229,6 +229,17 @@ def render_resolved_requests_history(
     return True
 
 
+# TEMP (QA UI): forzar caja negra visible sin depender del rol hasta validar drawer.
+_XRAY_FORCE_VISIBLE = True
+
+
+def xray_audit_visible() -> bool:
+    """True si el panel Rayos X debe mostrarse (admin o modo forzado QA)."""
+    if _XRAY_FORCE_VISIBLE:
+        return True
+    return is_admin_user()
+
+
 def audit_trail_from_case(case_data: dict | None) -> list[str]:
     """Extrae global_audit_trail del JSON forense del expediente."""
     if not isinstance(case_data, dict):
@@ -251,8 +262,9 @@ def normalized_audit_trail_chronological(
 
 
 def render_admin_blackbox(audit_trail: list[str] | None = None) -> None:
-    """Consola de caja negra (solo admin). Silencioso para el resto de roles."""
-    if not is_admin_user():
+    """Consola de caja negra. Silencioso si xray_audit_visible() es False."""
+    # Modo dios QA: _XRAY_FORCE_VISIBLE anula el corte por rol.
+    if not xray_audit_visible():
         return
 
     entries = normalized_audit_trail_chronological(audit_trail, newest_first=True)
@@ -280,19 +292,32 @@ def render_admin_blackbox(audit_trail: list[str] | None = None) -> None:
         )
 
 
-def mount_admin_xray_drawer(audit_trail: list[str] | None = None) -> None:
-    """Drawer lateral fijo con la caja negra (global en todas las pestañas del expediente)."""
-    if not is_admin_user():
+def mount_admin_xray_drawer(
+    audit_trail: list[str] | None = None,
+    holder: dict | None = None,
+) -> None:
+    """Drawer lateral con caja negra (global en todas las pestañas del expediente)."""
+    if not xray_audit_visible():
         return
 
-    with ui.right_drawer(value=True).classes(
+    open_default = True
+    if holder is not None:
+        open_default = bool(holder.get("open", True))
+
+    drawer = ui.right_drawer(value=open_default).classes(
         "bg-[#050a06] text-[#e2fbe8]"
-    ).props("width=400 show-if-above bordered persistent"):
-        with ui.column().classes("w-full h-full gap-0 p-4"):
-            with ui.scroll_area().classes("w-full flex-grow").style(
-                "height: calc(100vh - 2rem); max-height: 100%;"
-            ):
-                render_admin_blackbox(audit_trail)
+    )
+    drawer.props("side=right width=400 bordered")
+
+    with drawer:
+        with ui.column().classes("w-full gap-0 p-4").style("min-height: 100vh"):
+            render_admin_blackbox(audit_trail)
+
+    if holder is not None:
+        holder["drawer"] = drawer
+        holder["open"] = open_default
+
+        holder["toggle"] = drawer.toggle
 
 
 def render_black_box_audit_trail(case_data: dict) -> None:
