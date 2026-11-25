@@ -229,7 +229,7 @@ def render_resolved_requests_history(
     return True
 
 
-# TEMP (QA UI): forzar caja negra visible sin depender del rol hasta validar drawer.
+# TEMP (QA UI): forzar caja negra visible sin depender del rol hasta validar el modal.
 _XRAY_FORCE_VISIBLE = True
 
 
@@ -292,36 +292,32 @@ def render_admin_blackbox(audit_trail: list[str] | None = None) -> None:
         )
 
 
-def mount_admin_xray_drawer(
-    audit_trail: list[str] | None = None,
-    holder: dict | None = None,
-) -> None:
-    """Drawer lateral con caja negra (global en todas las pestañas del expediente)."""
+def mount_admin_xray_dialog(audit_trail: list[str] | None = None):
+    """Modal flotante con caja negra (compatible con vistas anidadas en column)."""
     if not xray_audit_visible():
-        return
+        return None
 
-    open_default = True
-    if holder is not None:
-        open_default = bool(holder.get("open", True))
-
-    drawer = ui.right_drawer(value=open_default).classes(
-        "bg-[#050a06] text-[#e2fbe8]"
-    )
-    drawer.props("side=right width=400 bordered")
-
-    with drawer:
-        with ui.column().classes("w-full gap-0 p-4").style("min-height: 100vh"):
-            render_admin_blackbox(audit_trail)
-
-    if holder is not None:
-        holder["drawer"] = drawer
-        holder["open"] = open_default
-
-        holder["toggle"] = drawer.toggle
+    entries = normalized_audit_trail_chronological(audit_trail, newest_first=True)
+    with ui.dialog() as dialog, ui.card().classes(
+        "bg-grey-9 text-green-400 font-mono w-full max-w-2xl"
+    ).style("max-height: 88vh"):
+        ui.label("🕵️ MODO AUDITOR: CAJA NEGRA").classes("text-xl font-bold mb-2")
+        ui.label("Orden: más reciente arriba").classes("text-caption text-grey-5 mb-4")
+        with ui.scroll_area().classes("w-full").style("max-height: 60vh"):
+            with ui.column().classes("w-full gap-2 pr-2"):
+                if not entries:
+                    ui.label("Sin entradas de auditoría en este expediente.").classes(
+                        "text-grey-5"
+                    )
+                else:
+                    for index, entry in enumerate(entries, start=1):
+                        ui.label(f"#{index:02d}  {entry}").classes("mb-2 text-body2")
+        ui.button("Cerrar", on_click=dialog.close).classes("mt-4")
+    return dialog
 
 
 def render_black_box_audit_trail(case_data: dict) -> None:
-    """Compatibilidad: render inline (preferir mount_admin_xray_drawer en vista expediente)."""
+    """Compatibilidad: render inline (preferir mount_admin_xray_dialog en vista expediente)."""
     render_admin_blackbox(audit_trail_from_case(case_data))
 
 

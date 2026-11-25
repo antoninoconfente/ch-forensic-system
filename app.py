@@ -89,7 +89,7 @@ from ui.views.login import build_login_page
 from ui.blueprints import _infer_cad_defaults_from_dictamen
 from ui.detail_discipline import (
     audit_trail_from_case,
-    mount_admin_xray_drawer,
+    mount_admin_xray_dialog,
     xray_audit_visible,
     render_gemology_calculator,
     render_gemology_empty_state,
@@ -1430,9 +1430,8 @@ def index_page():
             if not seeded_gem.get("_user_saved"):
                 seeded_gem["applies"] = False
 
-        xray_holder: dict = {}
         audit_trail_entries = audit_trail_from_case(discipline_ctx)
-        mount_admin_xray_drawer(audit_trail_entries, xray_holder)
+        xray_dialog = mount_admin_xray_dialog(audit_trail_entries)
 
         render_top_bar(f"REF // {case_id}")
 
@@ -1449,15 +1448,13 @@ def index_page():
                 )
 
             with ui.row().classes("items-end gap-8 flex-wrap"):
-                if xray_audit_visible():
-                    toggle_cb = xray_holder.get("toggle")
-                    if callable(toggle_cb):
-                        ui.button(
-                            "🔍 Modo Auditor",
-                            on_click=toggle_cb,
-                        ).props("outline dense").classes(
-                            "font-mono text-[10px] tracking-wider"
-                        )
+                if xray_dialog:
+                    ui.button(
+                        "🔍 Modo Auditor",
+                        on_click=xray_dialog.open,
+                    ).props("outline size=sm").classes(
+                        "font-mono text-[10px] tracking-wider"
+                    )
                 if needs_archive and can_save_expedient():
 
                     async def save_expediente_to_archive():
