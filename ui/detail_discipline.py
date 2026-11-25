@@ -240,27 +240,11 @@ def xray_audit_visible() -> bool:
     return is_admin_user()
 
 
-def _trail_from_report_blob(blob: dict | None, phase: str) -> list[str]:
-    if not isinstance(blob, dict):
-        return []
-    raw = blob.get("global_audit_trail") or []
-    return [f"[{phase}] {str(x).strip()}" for x in raw if str(x).strip()]
-
-
 def audit_trail_from_case(case_data: dict | None) -> list[str]:
-    """Concatena global_audit_trail de Forense + Tasación + Logística (o maestro persistido)."""
-    if not isinstance(case_data, dict):
-        return []
-    master = case_data.get("master_global_audit_trail")
-    if isinstance(master, list):
-        entries = [str(x).strip() for x in master if str(x).strip()]
-        if entries:
-            return entries
-    merged: list[str] = []
-    merged.extend(_trail_from_report_blob(case_data.get("forensic_report"), "FORENSE"))
-    merged.extend(_trail_from_report_blob(case_data.get("market_valuation_report"), "TASACIÓN"))
-    merged.extend(_trail_from_report_blob(case_data.get("logistics_arbitrage_report"), "LOGÍSTICA"))
-    return merged
+    """Vista unificada de caja negra (raíz + sub-diccionarios de agentes)."""
+    from utils.audit_trail import get_full_audit_trail
+
+    return get_full_audit_trail(case_data)
 
 
 def normalized_audit_trail_chronological(
@@ -304,12 +288,21 @@ def render_admin_blackbox(audit_trail: list[str] | None = None) -> None:
         )
 
 
-def mount_admin_xray_dialog(audit_trail: list[str] | None = None):
+def mount_admin_xray_dialog(
+    expediente: dict | None = None,
+    audit_trail: list[str] | None = None,
+):
     """Modal flotante con caja negra (compatible con vistas anidadas en column)."""
     if not xray_audit_visible():
         return None
 
-    entries = normalized_audit_trail_chronological(audit_trail, newest_first=True)
+    from utils.audit_trail import get_full_audit_trail
+
+    if expediente is not None:
+        trail = get_full_audit_trail(expediente)
+    else:
+        trail = list(audit_trail or [])
+    entries = normalized_audit_trail_chronological(trail, newest_first=True)
     with ui.dialog() as dialog, ui.card().classes(
         "bg-grey-9 text-green-400 font-mono w-full max-w-2xl"
     ).style("max-height: 88vh"):

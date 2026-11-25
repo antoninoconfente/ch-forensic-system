@@ -88,7 +88,6 @@ from ui.theme import EDITORIAL_CSS, editorial_button, _web_img_src
 from ui.views.login import build_login_page
 from ui.blueprints import _infer_cad_defaults_from_dictamen
 from ui.detail_discipline import (
-    audit_trail_from_case,
     mount_admin_xray_dialog,
     xray_audit_visible,
     render_gemology_calculator,
@@ -106,7 +105,7 @@ from utils.discipline import (
     serial_decoding_ficha_rows,
     spec_value_is_present,
 )
-from utils.audit_trail import sync_master_global_audit_trail
+from utils.audit_trail import propagate_audit_trail_to_root, sync_master_global_audit_trail
 from utils.markdown_format import renumber_markdown_headers
 from utils.parsers import (
     _auto_seed_gemology_from_dictamen,
@@ -458,6 +457,7 @@ def _metadata_from_case(case: Case) -> dict:
         "market_valuation_report": dossier.get("market_valuation_report") or {},
         "logistics_arbitrage_report": dossier.get("logistics_arbitrage_report") or {},
         "master_global_audit_trail": dossier.get("master_global_audit_trail") or [],
+        "global_audit_trail": dossier.get("global_audit_trail") or [],
         "manual_jewelry_mode": dossier.get("manual_jewelry_mode"),
     }
 
@@ -506,6 +506,7 @@ def persist_cloud_case(
         "market_valuation_report": meta.get("market_valuation_report") or {},
         "logistics_arbitrage_report": meta.get("logistics_arbitrage_report") or {},
         "master_global_audit_trail": meta.get("master_global_audit_trail") or [],
+        "global_audit_trail": meta.get("global_audit_trail") or [],
         "manual_jewelry_mode": meta.get("manual_jewelry_mode"),
     }
     columns = _gemology_columns(gem_block)
@@ -744,6 +745,9 @@ def commit_ficha_answers(
         stored["master_global_audit_trail"] = extras["master_global_audit_trail"]
     if investigation.get("master_global_audit_trail"):
         stored["master_global_audit_trail"] = investigation["master_global_audit_trail"]
+    if investigation.get("global_audit_trail"):
+        stored["global_audit_trail"] = investigation["global_audit_trail"]
+    propagate_audit_trail_to_root(stored)
     sync_master_global_audit_trail(stored)
     if extras.get("cad_blueprint"):
         stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
@@ -1442,8 +1446,7 @@ def index_page():
             if not seeded_gem.get("_user_saved"):
                 seeded_gem["applies"] = False
 
-        audit_trail_entries = audit_trail_from_case(discipline_ctx)
-        xray_dialog = mount_admin_xray_dialog(audit_trail_entries)
+        xray_dialog = mount_admin_xray_dialog(expediente=discipline_ctx)
 
         render_top_bar(f"REF // {case_id}")
 
@@ -1873,6 +1876,10 @@ def index_page():
                                 stored["market_valuation_report"] = result["market_valuation_report"]
                             if result.get("master_global_audit_trail"):
                                 stored["master_global_audit_trail"] = result["master_global_audit_trail"]
+                            if result.get("global_audit_trail"):
+                                stored["global_audit_trail"] = result["global_audit_trail"]
+                            propagate_audit_trail_to_root(stored)
+                            sync_master_global_audit_trail(stored)
                             if result.get("successful_queries"):
                                 stored["successful_queries"] = result["successful_queries"]
                             if case_id in _DRAFT_CASES:

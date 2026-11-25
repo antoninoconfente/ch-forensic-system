@@ -16,7 +16,7 @@ from agents.schemas import (
     infer_parent_domain,
     serial_decoding_dict,
 )
-from utils.audit_trail import sync_master_global_audit_trail
+from utils.audit_trail import propagate_audit_trail_to_root, sync_master_global_audit_trail
 from utils.markdown_format import renumber_markdown_headers
 from src.research.ai_agent import LocalAIAgent
 
@@ -587,9 +587,12 @@ class ExpertCouncilOrchestrator:
                 else prior_extras.get("logistics_arbitrage_report") or {}
             ),
         }
+        propagate_audit_trail_to_root(dossier_seed)
         sync_master_global_audit_trail(dossier_seed)
         if dossier_seed.get("master_global_audit_trail"):
             draft_extras["master_global_audit_trail"] = dossier_seed["master_global_audit_trail"]
+        if dossier_seed.get("global_audit_trail"):
+            draft_extras["global_audit_trail"] = dossier_seed["global_audit_trail"]
 
         forensic_dump = None
         if parsed_forensic is not None:
@@ -607,6 +610,7 @@ class ExpertCouncilOrchestrator:
             "logistics_arbitrage_report": logistics_report.model_dump(),
             "draft_extras": draft_extras,
             "master_global_audit_trail": draft_extras.get("master_global_audit_trail"),
+            "global_audit_trail": draft_extras.get("global_audit_trail"),
         }
 
     def recalculate_market_and_buyers(
@@ -669,15 +673,18 @@ class ExpertCouncilOrchestrator:
         stored = dict(metadata)
         if market_report is not None:
             stored["market_valuation_report"] = market_report.model_dump()
+            stored.setdefault("market_valuation", stored["market_valuation_report"])
         if successful_queries:
             stored["successful_queries"] = list(
                 dict.fromkeys((metadata.get("successful_queries") or []) + successful_queries)
             )
+        propagate_audit_trail_to_root(stored)
         sync_master_global_audit_trail(stored)
 
         return {
             "dictamen_text": updated_dictamen or dictamen_text,
             "market_valuation_report": stored.get("market_valuation_report"),
+            "global_audit_trail": stored.get("global_audit_trail"),
             "master_global_audit_trail": stored.get("master_global_audit_trail"),
             "successful_queries": stored.get("successful_queries"),
         }
