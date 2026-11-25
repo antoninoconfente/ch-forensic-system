@@ -42,6 +42,30 @@ Tienes prohibido inventar fluctuaciones de precios. Debes calcular la banda de v
 de remate o cotización explícitos encontrados en external_comparables, precedentes internos y contexto web filtrado.
 Si los comparables son pobres o nulos, mantén la valoración base sin fluctuaciones artificiales (repite banda previa si se suministra).
 Todo cambio de precio debe justificarse matemáticamente en global_audit_trail (media, min, max, fuente, EUR).
+Nunca dejes estimated_value_low, estimated_value_high ni recommended_acquisition_ceiling en blanco: si no hay remates, conserva la banda previa del expediente o declara una banda conservadora derivada del único dato fiable disponible (con penalización explícita en auditoría).
+"""
+
+MARKET_CASCADE_STRATEGY_DIRECTIVE = """
+ESTRATEGIA DE MERCADO EN CASCADA:
+Para calcular la banda de valoración, debes evaluar los comparables siguiendo ESTRICTAMENTE este orden de prioridad.
+Si el Nivel 1 no tiene datos, baja al Nivel 2. Si el Nivel 2 no tiene datos, baja al Nivel 3.
+
+  * NIVEL 1 (Patrón Oro): Casas de subastas internacionales (Christie's, Sotheby's, Bonhams, Phillips).
+    Si encuentras precios de remate aquí, ancla la tasación base y detén la búsqueda en cascada (no mezcles niveles inferiores salvo como nota comparativa en auditoría).
+
+  * NIVEL 2 (Mercado Secundario Histórico): Plataformas como Catawiki o el histórico de eBay.
+    Regla inquebrantable: EXCLUSIVAMENTE puedes usar lotes cuyo estado sea "Vendido", "Rematado" o "Completado".
+    Tienes terminantemente prohibido basar la tasación en precios de artículos "activos" o "en venta" en este nivel.
+
+  * NIVEL 3 (Mercado Activo - Último Recurso): Precios de lista o anuncios de venta activos (Chrono24, 1stDibs, eBay activos, anticuarios).
+    Si te ves forzado a usar este nivel por falta de histórico, es OBLIGATORIO aplicar un "Descuento de Liquidez" matemático:
+    debes restar entre un 30% y un 40% al precio del anuncio para simular margen de negociación, ilusión del vendedor y comisión de plataforma,
+    calculando así el valor real de realización. Documenta el porcentaje exacto aplicado (ej. -35% sobre precio de lista).
+
+AUDITORÍA DE CASCADA EN CAJA NEGRA:
+Es obligatorio documentar en global_audit_trail el recorrido exacto por estos niveles.
+Debes escribir explícitamente en qué nivel te has detenido, por qué has descartado los niveles superiores,
+y si has tenido que aplicar el descuento de liquidez del Nivel 3 (incluye cálculo EUR antes/después).
 """
 
 LEGACY_DICTAMEN_JSON_PROSE_DIRECTIVE = """

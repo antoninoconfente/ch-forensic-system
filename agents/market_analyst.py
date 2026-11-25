@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from agents.council_prompts import (
     GLOBAL_AUDIT_TRAIL_JSON_HINT,
+    MARKET_CASCADE_STRATEGY_DIRECTIVE,
     MARKET_JSON_PROSE_DIRECTIVE,
     MARKET_PRICE_ANCHOR_DIRECTIVE,
     MODO_AUDITOR_MARKET_DIRECTIVE,
@@ -94,6 +95,7 @@ class MarketIntelligenceAgent:
             f"{MARKET_JSON_PROSE_DIRECTIVE}\n\n"
             f"{PRECEDENTS_NATURAL_LANGUAGE_DIRECTIVE}\n\n"
             f"{WEB_RAG_QUALITY_DIRECTIVE}\n\n"
+            f"{MARKET_CASCADE_STRATEGY_DIRECTIVE}\n\n"
             f"{MARKET_PRICE_ANCHOR_DIRECTIVE}\n\n"
             f"{GLOBAL_AUDIT_TRAIL_JSON_HINT}"
         )
