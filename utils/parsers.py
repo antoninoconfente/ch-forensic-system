@@ -484,31 +484,54 @@ def unanswered_questions(alerts_text: str, metadata: dict) -> list:
     return pending
 
 
-def pending_actionable_requests(metadata: dict, alerts_text: str = "") -> list:
+def normalize_actionable_request(item) -> dict | None:
+    """Vista segura para UI: dict plano con user_prompt y request_type (Supabase / Pydantic / legado)."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        raw = item
+    elif hasattr(item, "model_dump"):
+        try:
+            raw = item.model_dump()
+        except Exception:
+            return None
+    else:
+        return None
+
+    user_prompt = str(raw.get("user_prompt") or "").strip()
+    if not user_prompt:
+        return None
+
+    request_type = str(raw.get("request_type") or "verificacion_visual").strip()
+    if request_type not in ("necesita_foto", "necesita_medida", "verificacion_visual"):
+        request_type = "verificacion_visual"
+    return {"user_prompt": user_prompt, "request_type": request_type}
+
+
+def pending_actionable_requests(metadata: dict, alerts_text: str = "") -> list[dict]:
     """
     Peticiones pendientes del informe forense estructurado (solo user_prompt en UI).
     Si no hay recomendaciones JSON, usa extracto legado del dictamen sin internal_reasoning.
     """
-    try:
-        from agents.schemas import ActionableRequest
-    except ImportError:
-        return []
-
     meta = metadata or {}
     forensic = meta.get("forensic_report") or {}
     answers = meta.get("question_answers") or {}
-    pending: list[ActionableRequest] = []
+    pending: list[dict] = []
 
     for item in forensic.get("recomendaciones") or []:
-        if not isinstance(item, dict):
+        view = normalize_actionable_request(item)
+        if not view:
+            try:
+                from agents.schemas import ActionableRequest
+
+                view = normalize_actionable_request(ActionableRequest.model_validate(item))
+            except Exception:
+                continue
+        if not view:
             continue
-        try:
-            req = ActionableRequest.model_validate(item)
-        except Exception:
+        if _is_substantive_answer(answers.get(view["user_prompt"], "")):
             continue
-        if _is_substantive_answer(answers.get(req.user_prompt, "")):
-            continue
-        pending.append(req)
+        pending.append(view)
 
     if pending:
         return pending
@@ -516,11 +539,12 @@ def pending_actionable_requests(metadata: dict, alerts_text: str = "") -> list:
     for question in extract_questions_from_alerts(alerts_text or ""):
         if _is_substantive_answer(answers.get(question, "")):
             continue
-        pending.append(
-            ActionableRequest(
-                internal_reasoning="[Legado dictamen sin estructura ActionableRequest]",
-                user_prompt=question,
-                request_type="verificacion_visual",
-            )
+        view = normalize_actionable_request(
+            {
+                "user_prompt": question,
+                "request_type": "verificacion_visual",
+            }
         )
+        if view:
+            pending.append(view)
     return pending

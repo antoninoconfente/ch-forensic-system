@@ -1500,7 +1500,7 @@ def index_page():
 
         det_alerts, _ = parse_dictamen_sections(dictamen_text)
         pending_actionable = pending_actionable_requests(case_metadata, det_alerts)
-        pending_q = [req.user_prompt for req in pending_actionable]
+        pending_q = [rec.get("user_prompt", "") for rec in pending_actionable]
         categorized = _deduplicate_and_Categorize_dictamen(dictamen_text)
         findings = executive_findings(dictamen_text)
 
@@ -1565,12 +1565,16 @@ def index_page():
                             ui.html("<span class='micro-coord mt-2'>/// RECOMENDACIONES Y ALERTAS</span>")
                             ans_widgets = {}
                             files_mem = {}
-                            for idx, req in enumerate(pending_actionable):
+                            for idx, rec in enumerate(pending_actionable):
+                                user_prompt = str(rec.get("user_prompt", "") or "").strip()
+                                request_type = str(rec.get("request_type", "verificacion_visual") or "verificacion_visual")
+                                if not user_prompt:
+                                    continue
                                 type_label = {
                                     "necesita_foto": "FOTO",
                                     "necesita_medida": "MEDIDA",
                                     "verificacion_visual": "VERIFICACIÓN",
-                                }.get(req.request_type, "PENDIENTE")
+                                }.get(request_type, "PENDIENTE")
                                 with ui.column().classes("question-card w-full gap-2"):
                                     ui.html(
                                         f"<span class='micro-coord text-[#8c6d28] m-0'>{html.escape(type_label)}</span>"
@@ -1578,12 +1582,12 @@ def index_page():
                                     ui.html(
                                         f"<p class='m-0 text-[#141413] leading-relaxed'>"
                                         f"<strong>{html.escape(to_roman(idx))}.</strong> "
-                                        f"{html.escape(req.user_prompt)}</p>"
+                                        f"{html.escape(user_prompt)}</p>"
                                     )
-                                    opts = _choice_options(req.user_prompt)
+                                    opts = _choice_options(user_prompt)
                                     placeholder = (
                                         "Indique la medida en mm o gramos…"
-                                        if req.request_type == "necesita_medida"
+                                        if request_type == "necesita_medida"
                                         else "Describa lo observado o aporte el dato solicitado…"
                                     )
                                     if opts:
@@ -1604,7 +1608,7 @@ def index_page():
 
                                     upload_label = (
                                         "Subir foto solicitada"
-                                        if req.request_type == "necesita_foto"
+                                        if request_type == "necesita_foto"
                                         else "Foto de detalle opcional"
                                     )
                                     ui.upload(
