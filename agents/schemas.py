@@ -6,6 +6,9 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# Respuestas JSON del LLM: tolerar claves alucinadas sin tumbar el pipeline.
+LLM_RESPONSE_CONFIG = ConfigDict(extra="ignore")
+
 ActionableRequestType = Literal["necesita_foto", "necesita_medida", "verificacion_visual"]
 
 SERIAL_DECODING_FIELD_KEYS: tuple[str, ...] = (
@@ -36,7 +39,7 @@ def infer_parent_domain(taxonomy_key: str) -> str:
 class SerialDecoding(BaseModel):
     """Decodificación pericial obligatoria cuando la pieza tiene número de serie o referencia de fábrica."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     serial_number_raw: str = Field(..., min_length=1, description="Transcripción literal del serial")
     serial_format_analysis: str = Field(..., min_length=1, description="Estructura, prefijos y longitud")
@@ -72,7 +75,7 @@ class SerialDecoding(BaseModel):
 
 
 class DimensionsMm(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     length: float | None = Field(default=None, description="Largo en mm")
     width: float | None = Field(default=None, description="Ancho en mm")
@@ -83,7 +86,7 @@ class DimensionsMm(BaseModel):
 class ResolvedRequest(BaseModel):
     """Pregunta ya respondida en la Mesa de Auditoría."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     pregunta_original: str = Field(description="La pregunta visual que se le hizo al usuario.")
     respuesta_usuario: str = Field(description="Lo que respondió el usuario.")
@@ -97,7 +100,7 @@ class ResolvedRequest(BaseModel):
 class ActionableRequest(BaseModel):
     """Doble cerebro: razonamiento forense interno + petición visible al usuario."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     internal_reasoning: str = Field(
         description=(
@@ -123,7 +126,7 @@ class ActionableRequest(BaseModel):
 
 
 class SynthesizedRubric(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     taxonomy_key: str = Field(..., min_length=3, max_length=128)
     parent_domain: str = Field(..., min_length=2, max_length=64)
@@ -139,7 +142,7 @@ class SynthesizedRubric(BaseModel):
 
 
 class ForensicReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     taxonomy_key: str
     category_name: str
@@ -265,7 +268,7 @@ def serial_decoding_dict(report: ForensicReport | dict) -> dict[str, str]:
 
 
 class TaxonomyGuess(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     taxonomy_key: str
     parent_domain: str
@@ -281,7 +284,7 @@ class TaxonomyGuess(BaseModel):
 
 
 class MarketComparable(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     source: str = ""
     title: str = ""
@@ -291,12 +294,17 @@ class MarketComparable(BaseModel):
 
 
 class MarketValuationReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     estimated_value_low: str = ""
     estimated_value_high: str = ""
     recommended_acquisition_ceiling: str = ""
     currency: str = "EUR"
+    # Alias frecuentes del LLM (también mapeados en model_validator before)
+    valuation_low: str = ""
+    valuation_high: str = ""
+    valuation_currency: str = ""
+    acquisition_ceiling: str = ""
     demand_trend: str = ""
     internal_precedents_used: list[MarketComparable] = Field(default_factory=list)
     external_comparables: list[MarketComparable] = Field(default_factory=list)
@@ -305,6 +313,24 @@ class MarketValuationReport(BaseModel):
         default_factory=list,
         description="CAJA NEGRA: Documenta aquí todas tus decisiones técnicas y de mercado.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_llm_valuation_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        pairs = (
+            ("valuation_low", "estimated_value_low"),
+            ("valuation_high", "estimated_value_high"),
+            ("valuation_currency", "currency"),
+            ("acquisition_ceiling", "recommended_acquisition_ceiling"),
+        )
+        for alias, canonical in pairs:
+            alias_val = str(data.get(alias) or "").strip()
+            canon_val = str(data.get(canonical) or "").strip()
+            if alias_val and not canon_val:
+                data[canonical] = alias_val
+        return data
 
     @field_validator("global_audit_trail", mode="before")
     @classmethod
@@ -328,7 +354,7 @@ class MarketValuationReport(BaseModel):
 
 
 class MarketRouteOption(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     hub_city: str = ""
     buyer_profile: str = ""
@@ -341,7 +367,7 @@ class MarketRouteOption(BaseModel):
 
 
 class LogisticsArbitrageReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = LLM_RESPONSE_CONFIG
 
     hs_code_estimate: str = ""
     hs_code_description: str = ""

@@ -1,13 +1,17 @@
 import os
 import time
-from duckduckgo_search import DDGS
+
+try:
+    from ddgs import DDGS
+except ImportError:  # compatibilidad instalaciones antiguas
+    from duckduckgo_search import DDGS
+
 
 class WebSearchEngine:
     @staticmethod
     def search_catalog(query: str, max_results: int = 3) -> list:
         """
-        Realiza una búsqueda web robusta utilizando duckduckgo_search para contrastar
-        cuños, marcas, modelos y referencias de coleccionismo con reintentos.
+        Realiza búsqueda web (paquete ddgs) para contrastar marcas, modelos y referencias con reintentos.
         """
         results = []
         for attempt in range(2):
