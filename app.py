@@ -80,7 +80,6 @@ from auth.supabase_auth import (
     can_manage_lots,
     can_save_expedient,
     get_current_role,
-    is_admin_user,
     is_authenticated,
     role_display_label,
     sign_out,
@@ -89,7 +88,8 @@ from ui.theme import EDITORIAL_CSS, editorial_button, _web_img_src
 from ui.views.login import build_login_page
 from ui.blueprints import _infer_cad_defaults_from_dictamen
 from ui.detail_discipline import (
-    render_black_box_audit_trail,
+    audit_trail_from_case,
+    mount_admin_xray_drawer,
     render_gemology_calculator,
     render_gemology_empty_state,
     render_jewelry_cad_laboratory,
@@ -1627,9 +1627,6 @@ def index_page():
                     render_public_ficha_spec_table(ficha_rows_list)
                     render_physical_metrology_block(discipline_ctx)
 
-                    if is_admin_user():
-                        render_black_box_audit_trail(discipline_ctx)
-
                     historia_widgets: dict[str, object] = {}
                     historia_files: dict[str, tuple[str, bytes]] = {}
                     has_historial = render_resolved_requests_history(
@@ -1871,6 +1868,8 @@ def index_page():
             elif active_tab == "forense":
                 ui.html("<span class='micro-coord'>DOSSIER PERICIAL COMPLETO (SIN DUPLICADOS, LECTURA CONTINUA)</span>")
                 ui.markdown(categorized["forense"]).classes("editorial-reader w-full")
+
+        mount_admin_xray_drawer(audit_trail_from_case(discipline_ctx))
 
     refresh_ui()
 

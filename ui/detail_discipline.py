@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 from nicegui import ui
 
+from auth.supabase_auth import is_admin_user
 from src.research.gemology import (
     AUTHORSHIPS,
     GEM_CLARITIES,
@@ -228,30 +229,75 @@ def render_resolved_requests_history(
     return True
 
 
-def render_black_box_audit_trail(case_data: dict) -> None:
-    """Caja negra: solo debe invocarse si el llamador ya validó permisos admin."""
-    forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}
-    trail = forensic.get("global_audit_trail") or []
-    entries = [str(x).strip() for x in trail if str(x).strip()]
-    with ui.column().classes(
-        "w-full gap-3 p-4 border border-[#1a1a18] bg-[#1c1917] text-[#e7e5e4]"
-    ):
+def audit_trail_from_case(case_data: dict | None) -> list[str]:
+    """Extrae global_audit_trail del JSON forense del expediente."""
+    if not isinstance(case_data, dict):
+        return []
+    forensic = case_data.get("forensic_report")
+    if not isinstance(forensic, dict):
+        return []
+    raw = forensic.get("global_audit_trail") or []
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
+def normalized_audit_trail_chronological(
+    audit_trail: list[str] | None, *, newest_first: bool = True
+) -> list[str]:
+    """Orden legible: por defecto la entrada más reciente arriba (append histórico en backend)."""
+    entries = [str(x).strip() for x in (audit_trail or []) if str(x).strip()]
+    if newest_first:
+        return list(reversed(entries))
+    return entries
+
+
+def render_admin_blackbox(audit_trail: list[str] | None = None) -> None:
+    """Consola de caja negra (solo admin). Silencioso para el resto de roles."""
+    if not is_admin_user():
+        return
+
+    entries = normalized_audit_trail_chronological(audit_trail, newest_first=True)
+    ui.html(
+        "<div class='w-full border-b border-[#1f3d24] pb-2 mb-3'>"
+        "<p class='m-0 text-[10px] font-mono tracking-[0.22em] text-[#4ade80] uppercase'>"
+        "Modo Rayos X · Admin</p>"
+        "<p class='m-0 mt-1 text-[12px] font-mono text-[#bbf7d0]'>"
+        "🕵️ REGISTRO DE IMPACTO (CAJA NEGRA)</p>"
+        "<p class='m-0 mt-1 text-[10px] font-mono text-[#6b8f71]'>"
+        "Orden: más reciente arriba</p></div>"
+    )
+    if not entries:
         ui.html(
-            "<span class='micro-coord' style='color:#a8a29e'>"
-            "🕵️ REGISTRO DE IMPACTO (CAJA NEGRA)</span>"
+            "<p class='m-0 text-[11px] font-mono text-[#6b8f71]'>"
+            "Sin entradas de auditoría en este expediente.</p>"
         )
-        if not entries:
-            ui.html(
-                "<p class='m-0 text-[11px] font-mono text-[#a8a29e]'>"
-                "Sin entradas de auditoría en este expediente.</p>"
-            )
-            return
-        body = "".join(
-            f"<p class='m-0 mb-2 text-[11px] leading-relaxed font-mono text-[#d6d3d1]'>"
-            f"• {html.escape(line)}</p>"
-            for line in entries
+        return
+    for index, line in enumerate(entries, start=1):
+        ui.html(
+            f"<div class='w-full mb-3 pb-2 border-b border-[#162816]'>"
+            f"<p class='m-0 text-[9px] font-mono text-[#4ade80]'>#{index:02d}</p>"
+            f"<p class='m-0 mt-1 text-[11px] leading-relaxed font-mono text-[#e2fbe8]'>"
+            f"{html.escape(line)}</p></div>"
         )
-        ui.html(body)
+
+
+def mount_admin_xray_drawer(audit_trail: list[str] | None = None) -> None:
+    """Drawer lateral fijo con la caja negra (global en todas las pestañas del expediente)."""
+    if not is_admin_user():
+        return
+
+    with ui.right_drawer(value=True).classes(
+        "bg-[#050a06] text-[#e2fbe8]"
+    ).props("width=400 show-if-above bordered persistent"):
+        with ui.column().classes("w-full h-full gap-0 p-4"):
+            with ui.scroll_area().classes("w-full flex-grow").style(
+                "height: calc(100vh - 2rem); max-height: 100%;"
+            ):
+                render_admin_blackbox(audit_trail)
+
+
+def render_black_box_audit_trail(case_data: dict) -> None:
+    """Compatibilidad: render inline (preferir mount_admin_xray_drawer en vista expediente)."""
+    render_admin_blackbox(audit_trail_from_case(case_data))
 
 
 def render_gemology_empty_state() -> None:
