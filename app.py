@@ -17,6 +17,7 @@ if current_dir not in sys.path:
 from agents.orchestrator import ExpertCouncilOrchestrator, apply_user_resolutions_to_forensic_dict
 from src.research.ai_agent import (
     LocalAIAgent,
+    _compose_context_notes,
     apply_interrogation_update,
     relationalize_metadata,
 )
@@ -638,12 +639,35 @@ def save_cad_blueprint_and_recalculate(case_id: str, case_folder: str, metadata:
 
 
 
-def commit_ficha_answers(case_id: str, case_folder: str, metadata: dict, pending_questions: list, answers_by_index: dict, files_by_index: dict):
+def commit_ficha_answers(
+    case_id: str,
+    case_folder: str,
+    metadata: dict,
+    pending_questions: list,
+    answers_by_index: dict,
+    files_by_index: dict,
+    resolved_edits: dict | None = None,
+    resolved_files: dict | None = None,
+):
     stored = dict(get_case_view_model(case_id) or metadata or {})
     evidence_folder = os.path.join("data", "temp", "cloud", case_id or "case", "answers")
     os.makedirs(evidence_folder, exist_ok=True)
     new_locals = []
     newly_resolved = list(stored.get("resolved_questions") or [])
+    resolved_edits = resolved_edits or {}
+    resolved_files = resolved_files or {}
+    for q_key, uploaded in resolved_files.items():
+        if uploaded is None:
+            continue
+        name, content = uploaded
+        extension = os.path.splitext(name)[1] or ".jpg"
+        destination = os.path.join(
+            evidence_folder,
+            f"evidence_hist_{os.urandom(2).hex()}{extension}",
+        )
+        with open(destination, "wb") as handle:
+            handle.write(content)
+        new_locals.append(destination)
     for index, question in enumerate(pending_questions):
         answer = answers_by_index.get(index, "")
         answer = answer.strip() if isinstance(answer, str) else ""
@@ -659,6 +683,16 @@ def commit_ficha_answers(case_id: str, case_folder: str, metadata: dict, pending
             new_locals.append(destination)
 
     updated_state = apply_interrogation_update(stored, pending_questions, answers_by_index)
+    if resolved_edits:
+        qa = dict(updated_state.get("question_answers") or {})
+        for question, answer in resolved_edits.items():
+            q = str(question or "").strip()
+            if not q:
+                continue
+            qa[q] = answer.strip() if isinstance(answer, str) else ""
+        updated_state["question_answers"] = qa
+        intake = updated_state.get("intake_notes") or stored.get("intake_notes") or ""
+        updated_state["prompt_context"] = _compose_context_notes(intake, qa)
     stored["resolved_questions"] = newly_resolved
     stored["intake_notes"] = updated_state["intake_notes"]
     stored["question_answers"] = updated_state["question_answers"]
@@ -672,6 +706,8 @@ def commit_ficha_answers(case_id: str, case_folder: str, metadata: dict, pending
         pending_questions,
         answers_by_index,
         files_by_index,
+        resolved_edits=resolved_edits,
+        resolved_files=resolved_files,
     )
     stored["forensic_report"] = prior_forensic
     investigation = expert_council.run_investigation(
@@ -1594,18 +1630,24 @@ def index_page():
                     if is_admin_user():
                         render_black_box_audit_trail(discipline_ctx)
 
-                    render_resolved_requests_history(discipline_ctx)
+                    historia_widgets: dict[str, object] = {}
+                    historia_files: dict[str, tuple[str, bytes]] = {}
+                    has_historial = render_resolved_requests_history(
+                        discipline_ctx,
+                        question_answers=ficha.get("question_answers") or {},
+                        widgets_out=historia_widgets,
+                        files_out=historia_files,
+                    )
 
                     ui.html("<span class='micro-coord mt-2'>/// RESOLUCIÓN DE DUDAS ACTIVAS</span>")
+                    mesa_files_mem: dict[int, tuple[str, bytes]] = {}
+                    mesa_widgets: dict = {}
                     if not pending_actionable:
                         ui.html(
                             "<p class='micro-coord text-[#625E57] m-0'>"
                             "No hay peticiones pendientes del perito en este expediente.</p>"
                         )
                     else:
-                        mesa_files_mem: dict[int, tuple[str, bytes]] = {}
-                        mesa_widgets: dict = {}
-
                         for idx, rec in enumerate(pending_actionable):
                             user_prompt = str(rec.get("user_prompt", "") or "").strip()
                             request_type = str(
@@ -1658,43 +1700,46 @@ def index_page():
                                     on_upload=make_mesa_up(idx),
                                 ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
 
-                        if can_save_expedient() and mesa_widgets:
-                            mesa_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+                    if can_save_expedient() and (mesa_widgets or historia_widgets):
+                        mesa_status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
 
-                            async def submit_mesa_master() -> None:
-                                mesa_status.text = (
-                                    "⏳ ACTUALIZANDO EXPEDIENTE Y RECALCULANDO PERITAJE…"
-                                )
-                                mesa_status.classes(remove="hidden")
-                                answers_dict = {
-                                    i: (w.value or "") for i, w in mesa_widgets.items()
-                                }
-                                updated = await run.io_bound(
-                                    commit_ficha_answers,
-                                    case_id,
-                                    folder_path,
-                                    ficha,
-                                    pending_q,
-                                    answers_dict,
-                                    mesa_files_mem,
-                                )
-                                if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
-                                    ui.notify(str(updated), type="negative")
-                                    return
-                                state["last_dictamen"] = updated
-                                ui.notify("Expediente actualizado y peritaje recalculado", type="positive")
-                                refresh_ui()
-
-                            ui.button(
-                                "Actualizar Expediente y Recalcular",
-                                on_click=submit_mesa_master,
-                            ).props("color=primary").classes("w-full mt-4")
-                            mesa_status
-                        elif pending_actionable and not can_save_expedient():
-                            ui.html(
-                                "<p class='micro-coord text-[#625E57] m-0'>"
-                                "Resolución de dudas reservada a analistas y administradores.</p>"
+                        async def submit_mesa_master() -> None:
+                            mesa_status.text = (
+                                "⏳ ACTUALIZANDO EXPEDIENTE Y RECALCULANDO PERITAJE…"
                             )
+                            mesa_status.classes(remove="hidden")
+                            answers_dict = {i: (w.value or "") for i, w in mesa_widgets.items()}
+                            historia_answers = {
+                                q: (w.value or "") for q, w in historia_widgets.items()
+                            }
+                            updated = await run.io_bound(
+                                commit_ficha_answers,
+                                case_id,
+                                folder_path,
+                                ficha,
+                                pending_q,
+                                answers_dict,
+                                mesa_files_mem,
+                                historia_answers,
+                                historia_files,
+                            )
+                            if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
+                                ui.notify(str(updated), type="negative")
+                                return
+                            state["last_dictamen"] = updated
+                            ui.notify("Expediente actualizado y peritaje recalculado", type="positive")
+                            refresh_ui()
+
+                        ui.button(
+                            "Actualizar Expediente y Recalcular",
+                            on_click=submit_mesa_master,
+                        ).props("color=primary").classes("w-full mt-4")
+                        mesa_status
+                    elif (pending_actionable or has_historial) and not can_save_expedient():
+                        ui.html(
+                            "<p class='micro-coord text-[#625E57] m-0'>"
+                            "Resolución de dudas reservada a analistas y administradores.</p>"
+                        )
 
             elif active_tab == "gemologia":
                 jewelry_ui_state = {

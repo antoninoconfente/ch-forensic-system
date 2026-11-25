@@ -56,6 +56,9 @@ def apply_user_resolutions_to_forensic_dict(
     pending_questions: list[str],
     answers_by_index: dict,
     files_by_index: dict | None = None,
+    *,
+    resolved_edits: dict[str, str] | None = None,
+    resolved_files: dict[str, tuple[str, bytes]] | None = None,
 ) -> dict:
     """Persiste respuestas de la mesa antes del re-peritaje (respaldo si el LLM no las copia)."""
     from utils.parsers import _is_substantive_answer
@@ -66,6 +69,34 @@ def apply_user_resolutions_to_forensic_dict(
         for r in (forensic.get("preguntas_resueltas") or [])
         if isinstance(r, dict) and str(r.get("pregunta_original") or "").strip()
     }
+    resolved_edits = resolved_edits or {}
+    resolved_files = resolved_files or {}
+    for question, answer in resolved_edits.items():
+        q = str(question or "").strip()
+        if not q:
+            continue
+        text = answer.strip() if isinstance(answer, str) else ""
+        prior = indexed.get(q) or {"pregunta_original": q, "respuesta_usuario": ""}
+        if _is_substantive_answer(text):
+            indexed[q] = {"pregunta_original": q, "respuesta_usuario": text}
+        elif text:
+            indexed[q] = {"pregunta_original": q, "respuesta_usuario": text}
+        elif q in indexed:
+            indexed[q] = {**prior, "pregunta_original": q}
+        if resolved_files.get(q) and not _is_substantive_answer(indexed[q].get("respuesta_usuario", "")):
+            indexed[q]["respuesta_usuario"] = (
+                "Evidencia fotográfica adjunta en mesa de auditoría."
+            )
+    for question, _upload in resolved_files.items():
+        q = str(question or "").strip()
+        if not q or q in resolved_edits:
+            continue
+        if q not in indexed:
+            indexed[q] = {"pregunta_original": q, "respuesta_usuario": ""}
+        if not _is_substantive_answer(str(indexed[q].get("respuesta_usuario") or "")):
+            indexed[q]["respuesta_usuario"] = (
+                "Evidencia fotográfica adjunta en mesa de auditoría."
+            )
     files_by_index = files_by_index or {}
     for index, question in enumerate(pending_questions or []):
         q = str(question or "").strip()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 from collections.abc import Callable
 
 from nicegui import ui
@@ -144,29 +145,87 @@ def render_public_ficha_spec_table(rows: list[tuple[str, str]]) -> None:
     ui.html(f"<div class='spec-table w-full'>{rows_html}</div>")
 
 
-def render_resolved_requests_history(case_data: dict) -> None:
-    """Historial de preguntas ya respondidas (solo lectura). Omite render si está vacío."""
+async def _extract_upload_bytes(e) -> tuple[str, bytes]:
+    """Lee bytes de un evento ui.upload (misma convención que app.py)."""
+    raw_name = getattr(e, "name", None)
+    if not raw_name and hasattr(e, "file"):
+        raw_name = getattr(e.file, "name", "evidence.jpg")
+    raw_name = raw_name or "evidence.jpg"
+
+    ext = os.path.splitext(raw_name)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        ext = ".jpg"
+    safe_name = f"ev_{os.urandom(3).hex()}{ext}"
+
+    if hasattr(e, "content") and e.content is not None:
+        data = e.content.read()
+        if hasattr(data, "__await__"):
+            data = await data
+    elif hasattr(e, "file") and e.file is not None:
+        read_res = e.file.read()
+        data = await read_res if hasattr(read_res, "__await__") else read_res
+    else:
+        data = b""
+
+    return safe_name, data or b""
+
+
+def render_resolved_requests_history(
+    case_data: dict,
+    *,
+    question_answers: dict | None = None,
+    widgets_out: dict[str, object] | None = None,
+    files_out: dict[str, tuple[str, bytes]] | None = None,
+) -> bool:
+    """Historial editable de preguntas ya respondidas. Devuelve True si hay entradas."""
     forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}
     raw = forensic.get("preguntas_resueltas") or []
     items = [r for r in raw if isinstance(r, dict) and str(r.get("pregunta_original") or "").strip()]
     if not items:
-        return
+        return False
+
+    answers_map = question_answers if isinstance(question_answers, dict) else {}
+    widgets_out = widgets_out if widgets_out is not None else {}
+    files_out = files_out if files_out is not None else {}
+    widgets_out.clear()
+    files_out.clear()
 
     ui.html("<span class='micro-coord mt-2'>/// HISTORIAL DE RESOLUCIÓN</span>")
     with ui.column().classes("w-full gap-3 mt-2"):
         for entry in items:
             pregunta = str(entry.get("pregunta_original") or "").strip()
-            respuesta = str(entry.get("respuesta_usuario") or "").strip() or "—"
+            stored = str(entry.get("respuesta_usuario") or "").strip()
+            prior = str(answers_map.get(pregunta, stored) or "").strip()
+            if prior in ("—",):
+                prior = stored if stored != "—" else ""
             with ui.column().classes(
-                "w-full gap-1 p-3 border border-[#E5E0D6] bg-[#F8F6F2] opacity-90"
+                "w-full gap-2 p-3 border border-[#E5E0D6] bg-[#F8F6F2] opacity-90"
             ):
                 ui.html(
                     f"<p class='m-0 text-[11px] text-[#625E57] leading-relaxed'>{html.escape(pregunta)}</p>"
                 )
-                ui.html(
-                    f"<p class='m-0 text-[12px] text-[#141413] leading-relaxed font-medium'>"
-                    f"{html.escape(respuesta)}</p>"
-                )
+                widgets_out[pregunta] = ui.input(
+                    label="Respuesta (Editable)",
+                    value=prior,
+                    placeholder="Corrija o complete la respuesta registrada…",
+                ).classes("w-full")
+
+                def make_hist_up(q_key: str):
+                    async def _up(e):
+                        fname, fbytes = await _extract_upload_bytes(e)
+                        if fbytes:
+                            files_out[q_key] = (fname, fbytes)
+                            ui.notify("Evidencia actualizada en el historial", type="positive")
+
+                    return _up
+
+                ui.upload(
+                    label="Cambiar / adjuntar foto de evidencia",
+                    auto_upload=True,
+                    on_upload=make_hist_up(pregunta),
+                ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+
+    return True
 
 
 def render_black_box_audit_trail(case_data: dict) -> None:
