@@ -93,7 +93,7 @@ def build_comparable_web_queries(
         f'"{core}" catawiki subasta',
         f'"{core}" site:chrono24.com',
         f'"{core}" ebay sold auction',
-        f'"{core}" hammer price christies OR sothebys OR bonhams",
+        f'"{core}" hammer price christies OR sothebys OR bonhams',
     ]
 
 
