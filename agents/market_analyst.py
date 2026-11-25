@@ -14,6 +14,12 @@ from google import genai
 from google.genai import types
 from pydantic import ValidationError
 
+from agents.council_prompts import (
+    GLOBAL_AUDIT_TRAIL_JSON_HINT,
+    MARKET_JSON_PROSE_DIRECTIVE,
+    MODO_AUDITOR_MARKET_DIRECTIVE,
+    PRECEDENTS_NATURAL_LANGUAGE_DIRECTIVE,
+)
 from agents.schemas import ForensicReport, MarketComparable, MarketValuationReport
 from database.client import search_similar_cases
 
@@ -80,14 +86,20 @@ class MarketIntelligenceAgent:
             "combinando precedentes internos reales (galería CH) y señales web externas. "
             "Devuelve SOLO JSON válido MarketValuationReport. "
             "internal_precedents_used debe basarse en los precedentes internos suministrados (source='CH_GALLERY'). "
-            "external_comparables en señales web/catálogo. Si no hay precedentes internos, deja la lista vacía sin error."
+            "external_comparables en señales web/catálogo. Si no hay precedentes internos, deja la lista vacía sin error.\n\n"
+            f"{MODO_AUDITOR_MARKET_DIRECTIVE}\n\n"
+            f"{MARKET_JSON_PROSE_DIRECTIVE}\n\n"
+            f"{PRECEDENTS_NATURAL_LANGUAGE_DIRECTIVE}\n\n"
+            f"{GLOBAL_AUDIT_TRAIL_JSON_HINT}"
         )
+        precedents_prompt = self._precedents_for_prompt(precedents)
         prompt = (
             f"Caso activo: {case_id}\n"
             f"Descripción: {object_description}\n"
             f"Notas: {context_notes}\n\n"
             f"Forense:\n{(forensic_report.model_dump_json() if forensic_report else '{}')}\n\n"
-            f"Precedentes internos recuperados:\n{json.dumps(precedents, ensure_ascii=False, indent=2)}\n\n"
+            f"Precedentes internos recuperados (usar solo para razonar; no citar IDs ni similitudes numéricas al usuario):\n"
+            f"{json.dumps(precedents_prompt, ensure_ascii=False, indent=2)}\n\n"
             f"Contexto mercado web:\n{web_market_context or '—'}\n\n"
             f"Comparables internos semilla:\n{json.dumps([c.model_dump() for c in internal_seed], ensure_ascii=False)}"
         )
@@ -122,16 +134,31 @@ class MarketIntelligenceAgent:
             )
         return "\n".join(part for part in lines if (part or "").strip())
 
+    def _precedents_for_prompt(self, precedents: list[dict]) -> list[dict]:
+        rows: list[dict] = []
+        for row in precedents or []:
+            summary = (row.get("summary_text") or row.get("dictamen_excerpt") or row.get("title") or "").strip()
+            if not summary:
+                continue
+            rows.append({"summary": summary[:600]})
+        return rows
+
     def _precedents_to_comparables(self, precedents: list[dict]) -> list[MarketComparable]:
         comparables: list[MarketComparable] = []
         for row in precedents or []:
+            summary = (row.get("summary_text") or row.get("dictamen_excerpt") or "").strip()
+            title = (row.get("title") or "Pieza similar en galería CH").strip()
             comparables.append(
                 MarketComparable(
                     source="CH_GALLERY",
-                    title=row.get("title") or row.get("case_id") or "Expediente",
-                    price_estimate="Ver dictamen histórico",
-                    similarity_or_relevance=f"{float(row.get('similarity') or 0.0):.3f}",
-                    notes=(row.get("summary_text") or row.get("dictamen_excerpt") or "")[:500],
+                    title=title,
+                    price_estimate="Consultar banda en dictamen histórico",
+                    similarity_or_relevance=(
+                        "Precedente interno de referencia para esta familia de piezas."
+                        if summary
+                        else "Precedente interno recuperado por proximidad temática."
+                    ),
+                    notes=summary[:500],
                 )
             )
         return comparables

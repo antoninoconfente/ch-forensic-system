@@ -719,6 +719,10 @@ def commit_ficha_answers(
         agent,
         JEWELRY_RIGOR_INSTRUCTIONS,
         prior_forensic_report=prior_forensic,
+        prior_case_extras={
+            "market_valuation_report": stored.get("market_valuation_report"),
+            "logistics_arbitrage_report": stored.get("logistics_arbitrage_report"),
+        },
     )
     updated = investigation.get("dictamen_text") or ""
     if str(updated).startswith("[ERR") or str(updated).startswith("Error"):

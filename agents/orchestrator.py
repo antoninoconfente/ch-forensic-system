@@ -115,15 +115,37 @@ def apply_user_resolutions_to_forensic_dict(
     return forensic
 
 
+def _audit_trail_from_prior(prior, field: str = "global_audit_trail") -> list[str]:
+    if prior is None:
+        return []
+    if hasattr(prior, field):
+        raw = getattr(prior, field, None) or []
+    elif isinstance(prior, dict):
+        raw = prior.get(field) or []
+    else:
+        return []
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
 def merge_global_audit_trail(prior: dict | ForensicReport | None, report: ForensicReport) -> ForensicReport:
     """Concatena la caja negra previa con entradas nuevas (sin sobrescribir historial)."""
-    prior_entries: list[str] = []
-    if isinstance(prior, ForensicReport):
-        prior_entries = [str(x).strip() for x in (prior.global_audit_trail or []) if str(x).strip()]
-    elif isinstance(prior, dict):
-        prior_entries = [
-            str(x).strip() for x in (prior.get("global_audit_trail") or []) if str(x).strip()
-        ]
+    prior_entries = _audit_trail_from_prior(prior)
+    new_entries = [str(x).strip() for x in (report.global_audit_trail or []) if str(x).strip()]
+    return report.model_copy(update={"global_audit_trail": prior_entries + new_entries})
+
+
+def merge_market_audit_trail(
+    prior: dict | MarketValuationReport | None, report: MarketValuationReport
+) -> MarketValuationReport:
+    prior_entries = _audit_trail_from_prior(prior)
+    new_entries = [str(x).strip() for x in (report.global_audit_trail or []) if str(x).strip()]
+    return report.model_copy(update={"global_audit_trail": prior_entries + new_entries})
+
+
+def merge_logistics_audit_trail(
+    prior: dict | LogisticsArbitrageReport | None, report: LogisticsArbitrageReport
+) -> LogisticsArbitrageReport:
+    prior_entries = _audit_trail_from_prior(prior)
     new_entries = [str(x).strip() for x in (report.global_audit_trail or []) if str(x).strip()]
     return report.model_copy(update={"global_audit_trail": prior_entries + new_entries})
 
@@ -435,6 +457,7 @@ class ExpertCouncilOrchestrator:
         legacy_agent: LocalAIAgent | None = None,
         supplemental_instructions: str = "",
         prior_forensic_report: dict | None = None,
+        prior_case_extras: dict | None = None,
     ) -> dict:
         agent = legacy_agent or self.legacy_agent
         if agent is None:
@@ -474,15 +497,21 @@ class ExpertCouncilOrchestrator:
         if supplemental_instructions:
             enriched_notes = f"{enriched_notes}\n\n{supplemental_instructions}"
 
-        _council_log("[CONSEJO 2/3] Inteligencia de mercado · RAG galería + catálogos web")
-        web_context, successful_queries = agent._execute_deep_research(object_description, enriched_notes)
-        parsed_forensic = None
+        parsed_forensic: ForensicReport | None = None
         if forensic_report is not None:
             parsed_forensic = (
                 forensic_report
                 if isinstance(forensic_report, ForensicReport)
                 else ForensicReport.model_validate(forensic_report)
             )
+
+        _council_log("[CONSEJO 2/3] Inteligencia de mercado · RAG galería + catálogos web")
+        web_context, successful_queries = agent._execute_deep_research(
+            object_description,
+            enriched_notes,
+            forensic_report=parsed_forensic,
+        )
+        prior_extras = prior_case_extras or {}
         market_model = self.market_agent.analyze(
             parsed_forensic,
             object_description,
@@ -492,6 +521,10 @@ class ExpertCouncilOrchestrator:
         )
         if market_model is not None:
             market_report = market_model
+            if prior_extras.get("market_valuation_report"):
+                market_report = merge_market_audit_trail(
+                    prior_extras.get("market_valuation_report"), market_report
+                )
             enriched_notes = f"{enriched_notes}\n\n{_market_intelligence_block(market_report)}"
             if web_context:
                 enriched_notes = f"{enriched_notes}\n\n[CONTEXTO WEB DE MERCADO]\n{web_context}"
@@ -505,6 +538,10 @@ class ExpertCouncilOrchestrator:
             case_id,
         )
         logistics_report = logistics_model
+        if prior_extras.get("logistics_arbitrage_report"):
+            logistics_report = merge_logistics_audit_trail(
+                prior_extras.get("logistics_arbitrage_report"), logistics_report
+            )
         enriched_notes = f"{enriched_notes}\n\n{_logistics_intelligence_block(logistics_report)}"
 
         _council_log("[MoE] Dictamen integrado · tasación y Buyer Search (agente legado)")

@@ -301,6 +301,30 @@ class MarketValuationReport(BaseModel):
     internal_precedents_used: list[MarketComparable] = Field(default_factory=list)
     external_comparables: list[MarketComparable] = Field(default_factory=list)
     pricing_rationale: str = ""
+    global_audit_trail: list[str] = Field(
+        default_factory=list,
+        description="CAJA NEGRA: Documenta aquí todas tus decisiones técnicas y de mercado.",
+    )
+
+    @field_validator("global_audit_trail", mode="before")
+    @classmethod
+    def coerce_market_audit_trail(cls, value):
+        if value is None or not isinstance(value, list):
+            return []
+        return [str(x).strip() for x in value if str(x).strip()]
+
+    @field_validator("pricing_rationale", "demand_trend", mode="before")
+    @classmethod
+    def reject_json_blob_in_prose(cls, value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text.startswith("{") or text.startswith("[") or '"user_prompt"' in text:
+            return (
+                "Valoración en revisión editorial: el modelo intentó devolver estructura JSON "
+                "en un campo de prosa; reformule en lenguaje natural."
+            )
+        return text
 
 
 class MarketRouteOption(BaseModel):
@@ -328,3 +352,14 @@ class LogisticsArbitrageReport(BaseModel):
     route_comparison: list[MarketRouteOption] = Field(default_factory=list)
     recommended_max_buy_price: float = 0.0
     net_margin_rationale: str = ""
+    global_audit_trail: list[str] = Field(
+        default_factory=list,
+        description="CAJA NEGRA: Documenta aquí todas tus decisiones técnicas y de mercado.",
+    )
+
+    @field_validator("global_audit_trail", mode="before")
+    @classmethod
+    def coerce_logistics_audit_trail(cls, value):
+        if value is None or not isinstance(value, list):
+            return []
+        return [str(x).strip() for x in value if str(x).strip()]

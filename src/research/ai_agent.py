@@ -10,18 +10,23 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from src.research.web_search import WebSearchEngine
+from utils.market_search import build_comparable_web_queries, filter_relevant_web_results
 from src.research.visual_search import VisualSearchEngine
 from src.research.punchmarks_db import get_punchmarks_context_for_prompt
 
 try:
+    from agents.council_prompts import LEGACY_DICTAMEN_JSON_PROSE_DIRECTIVE
     from agents.forensic_prompts import (
         DOUBLE_BRAIN_DIRECTIVE,
         SERIAL_DECODING_DIRECTIVE,
         VISUAL_ANCHORING_DIRECTIVE,
     )
+    from agents.schemas import ForensicReport
 except ImportError:
+    LEGACY_DICTAMEN_JSON_PROSE_DIRECTIVE = ""
     DOUBLE_BRAIN_DIRECTIVE = ""
     SERIAL_DECODING_DIRECTIVE = ""
+    ForensicReport = None  # type: ignore[misc, assignment]
     VISUAL_ANCHORING_DIRECTIVE = ""
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -382,30 +387,31 @@ class LocalAIAgent:
         self.search_engine = WebSearchEngine()
         self.visual_search_engine = VisualSearchEngine()
 
-    def _execute_deep_research(self, object_desc: str, notes: str) -> tuple[str, list]:
+    def _execute_deep_research(
+        self,
+        object_desc: str,
+        notes: str,
+        forensic_report: ForensicReport | None = None,
+    ) -> tuple[str, list]:
         _pipeline_log("[2/4] Consultando mercado y catálogos web...")
         t0 = time.perf_counter()
-        clean_notes = notes.replace("FLAQUE", "PLAQUE").replace("ORG", "OR G")
-        historical_queries = self.library.get_heuristic_queries(object_desc, clean_notes)
-        
-        if historical_queries:
-            queries = historical_queries[:3]
-        else:
-            queries = [
-                f"{object_desc} {clean_notes} auction results price hammer value",
-                f"{object_desc} {clean_notes} vintage collector market price second hand",
-                f"{object_desc} {clean_notes} catalog reference price guide"
-            ]
+        queries = build_comparable_web_queries(object_desc, forensic_report)
+        if not queries:
+            _pipeline_log("[2/4] Sin marca/modelo identificable; se omite búsqueda web genérica.")
+            return (
+                "[Búsqueda web omitida: falta Marca/Modelo para comparables — evitar ruido irrelevante]",
+                [],
+            )
 
         combined_results = []
-        executed_queries = []
+        executed_queries: list[str] = []
         for q in queries:
             executed_queries.append(q)
-            res = self.search_engine.search_catalog(q, max_results=2)
+            res = filter_relevant_web_results(self.search_engine.search_catalog(q, max_results=2))
             for item in res:
                 if "cartier.com" not in item.get("href", ""):
                     combined_results.append(item)
-                    
+
         formatted_web = self.search_engine.format_search_results_for_prompt(combined_results)
         _pipeline_log(f"[2/4] Mercado listo ({time.perf_counter() - t0:.1f}s, {len(combined_results)} resultados)")
         return formatted_web, executed_queries
@@ -478,7 +484,8 @@ class LocalAIAgent:
             "6. 🛡️ VERIFICACIÓN DE AUTENTICIDAD Y ALEACIONES\n"
             "7. ⚖️ DICTAMEN PERICIAL FINAL Y CONFIANZA (%)\n"
             "8. 💰 MÓDULO DE TASACIÓN, GRAMAJE Y BANDA DE VALORACIÓN DE MERCADO\n"
-            "9. 🎯 ESTRATEGIA DE MERCADO Y BUYER SEARCH."
+            "9. 🎯 ESTRATEGIA DE MERCADO Y BUYER SEARCH.\n\n"
+            f"{LEGACY_DICTAMEN_JSON_PROSE_DIRECTIVE}"
         )
 
         contents = []

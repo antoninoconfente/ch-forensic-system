@@ -240,15 +240,22 @@ def xray_audit_visible() -> bool:
     return is_admin_user()
 
 
+def _trail_from_report_blob(blob: dict | None, phase: str) -> list[str]:
+    if not isinstance(blob, dict):
+        return []
+    raw = blob.get("global_audit_trail") or []
+    return [f"[{phase}] {str(x).strip()}" for x in raw if str(x).strip()]
+
+
 def audit_trail_from_case(case_data: dict | None) -> list[str]:
-    """Extrae global_audit_trail del JSON forense del expediente."""
+    """Concatena global_audit_trail de Forense + Tasación + Logística."""
     if not isinstance(case_data, dict):
         return []
-    forensic = case_data.get("forensic_report")
-    if not isinstance(forensic, dict):
-        return []
-    raw = forensic.get("global_audit_trail") or []
-    return [str(x).strip() for x in raw if str(x).strip()]
+    merged: list[str] = []
+    merged.extend(_trail_from_report_blob(case_data.get("forensic_report"), "FORENSE"))
+    merged.extend(_trail_from_report_blob(case_data.get("market_valuation_report"), "TASACIÓN"))
+    merged.extend(_trail_from_report_blob(case_data.get("logistics_arbitrage_report"), "LOGÍSTICA"))
+    return merged
 
 
 def normalized_audit_trail_chronological(
