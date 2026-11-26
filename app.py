@@ -395,7 +395,10 @@ def _case_archive_state(case_id: str) -> tuple[str, str]:
     """Etiqueta de cabecera y clase CSS editorial del badge."""
     if _case_is_draft(case_id):
         return "BORRADOR EN MEMORIA (NO GUARDADO)", "draft"
-    if get_case(case_id):
+    row = get_case(case_id) if case_id else None
+    if row and str(row.status or "").lower() == "draft":
+        return "BORRADOR EN NUBE (SIN ARCHIVAR)", "draft"
+    if row:
         return "ARCHIVADO EN NUBE", "archived"
     return "BORRADOR EN MEMORIA (NO GUARDADO)", "draft"
 
@@ -403,7 +406,63 @@ def _case_archive_state(case_id: str) -> tuple[str, str]:
 def _case_needs_archive(case_id: str) -> bool:
     if _case_is_draft(case_id):
         return True
-    return get_case(case_id) is None
+    row = get_case(case_id) if case_id else None
+    if row and str(row.status or "").lower() == "draft":
+        return True
+    return row is None
+
+
+def _default_draft_title() -> str:
+    return "Búsqueda Temporal (Sin Archivar)"
+
+
+def _build_autosave_payload(
+    case_id: str,
+    investigation: dict,
+    *,
+    obj_desc: str,
+    notes_val: str,
+    market_context_notes: str,
+    image_paths: list[str],
+    dictamen_text: str,
+) -> dict:
+    """Metadatos listos para persistir en Supabase tras la inferencia."""
+    draft_extras = investigation.get("draft_extras") or {}
+    payload = {
+        "case_id": case_id,
+        "status": "draft",
+        "custom_brand": "CH Hunter",
+        "custom_title": _default_draft_title(),
+        "object_description": obj_desc,
+        "intake_notes": notes_val,
+        "context_notes": market_context_notes,
+        "dictamen_text": dictamen_text,
+        "local_image_paths": list(image_paths),
+        "evidence_urls": list(image_paths),
+        "image_path": image_paths[0] if image_paths else "",
+        "timestamp": time.time(),
+        "gemology_data": {},
+        "cad_blueprint": dict(draft_extras.get("cad_blueprint") or {}),
+        "domain_taxonomy": draft_extras.get("domain_taxonomy") or "",
+        "forensic_report": investigation.get("forensic_report") or draft_extras.get("forensic_report") or {},
+        "market_valuation_report": investigation.get("market_valuation_report")
+        or draft_extras.get("market_valuation_report")
+        or {},
+        "logistics_arbitrage_report": investigation.get("logistics_arbitrage_report")
+        or draft_extras.get("logistics_arbitrage_report")
+        or {},
+        "question_answers": {},
+        "resolved_questions": [],
+        "logistics_intelligence": {},
+        "successful_queries": draft_extras.get("successful_queries") or [],
+        "master_global_audit_trail": investigation.get("master_global_audit_trail")
+        or draft_extras.get("master_global_audit_trail")
+        or [],
+        "global_audit_trail": draft_extras.get("global_audit_trail") or [],
+    }
+    propagate_audit_trail_to_root(payload)
+    sync_master_global_audit_trail(payload)
+    return payload
 
 
 def _gemology_columns(block: dict) -> dict:
@@ -1016,8 +1075,10 @@ def index_page():
         with ui.element("div").classes("catalog-card w-full"):
             with ui.column().classes("w-full gap-0"):
                 if web_src:
-                    with ui.element("div").classes("catalog-img-frame"):
-                        ui.image(web_src).props('fit=cover no-spinner').classes("w-full h-full")
+                    with ui.element("div").classes(
+                        "catalog-img-frame cursor-pointer hover:opacity-80 transition-opacity"
+                    ).on("click", lambda _, cid=c_id: navigate("detail", cid)):
+                        ui.image(web_src).props("fit=cover no-spinner").classes("w-full h-full")
                 else:
                     ui.html("<div class='catalog-img-frame flex items-center justify-center'><span class='micro-coord'>SIN IMAGEN</span></div>")
 
@@ -1031,12 +1092,12 @@ def index_page():
                 )
                 ui.html(f"<p class='catalog-excerpt'>{html.escape(excerpt)}</p>")
 
-            with ui.row().classes("w-full justify-between items-center pt-2"):
-                editorial_button("ABRIR FICHA", on_click=lambda _, cid=c_id: navigate("detail", cid))
-                if show_delete and can_delete_in_archive():
+            if show_delete and can_delete_in_archive():
+                with ui.row().classes("w-full justify-end items-center pt-2"):
                     def _del(cid=c_id):
                         delete_cloud_case(cid)
                         refresh_ui()
+
                     editorial_button("ELIMINAR", on_click=_del, small=True)
 
     def refresh_ui():
@@ -1169,6 +1230,14 @@ def index_page():
     
                         status_label = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
     
+                        with ui.dialog().props("persistent") as ai_loading_dialog, ui.card().classes(
+                            "w-full items-center justify-center bg-grey-10 text-white gap-6"
+                        ).style("min-width: min(100vw, 100%); min-height: 100vh; border-radius: 0;"):
+                            ui.spinner("dots", size="lg", color="green-4")
+                            ui.label(
+                                "Procesando Inteligencia Artificial... Por favor, espere."
+                            ).classes("text-lg text-center px-6")
+
                         async def run_investigation():
                             if source_radio.value == "URL / Google Drive" and not state["uploaded_paths"] and urls_input_ref["widget"]:
                                 raw = urls_input_ref["widget"].value or ""
@@ -1176,77 +1245,89 @@ def index_page():
                                     dl = await run.io_bound(download_image_from_url, u)
                                     if dl:
                                         state["uploaded_paths"].append(dl)
-    
+
                             if not state["uploaded_paths"]:
                                 ui.notify("Por favor, aporte al menos una evidencia fotográfica válida.", type="warning")
                                 return
-    
+
+                            ai_loading_dialog.open()
                             status_label.text = "⏳ ANALIZANDO EVIDENCIAS EN SEGUNDO PLANO (SIN DESCONEXIÓN DE SERVIDOR)..."
                             status_label.classes(remove="hidden")
-    
-                            spot_info = market_engine.get_metal_spot_prices()
-                            case_id = f"EXP-CH-{os.urandom(2).hex().upper()}"
-    
-                            human_parts = []
-                            if (in_weight.value or "").strip():
-                                human_parts.append(f"Peso físico: {in_weight.value.strip()}")
-                            if (in_dimensions.value or "").strip():
-                                human_parts.append(f"Medidas/Diámetro/Banda: {in_dimensions.value.strip()}")
-                            if (in_gems.value or "").strip():
-                                human_parts.append(f"Conteo y medidas reales de gemas verificadas por humano: {in_gems.value.strip()}")
-                            if (extra_notes.value or "").strip():
-                                human_parts.append(f"Notas adicionales: {extra_notes.value.strip()}")
-    
-                            notes_val = " | ".join(human_parts)
-                            obj_desc = notes_val if notes_val else "Pieza de joyería/colección analizada por visión artificial"
-                            market_context_notes = (
-                                f"{notes_val}\n\n{JEWELRY_RIGOR_INSTRUCTIONS}\n"
-                                f"[SPOT MARKET DATA - Gold: {spot_info.get('GOLD_EUR_PER_GRAM')}€/g, Silver: {spot_info.get('SILVER_EUR_PER_GRAM')}€/g]"
-                            )
-    
-                            council_fn = partial(
-                                expert_council.run_investigation,
-                                obj_desc,
-                                market_context_notes,
-                                list(state["uploaded_paths"]),
-                                case_id,
-                                agent,
-                                JEWELRY_RIGOR_INSTRUCTIONS,
-                            )
-                            investigation = await run.io_bound(council_fn)
-                            dictamen_text = renumber_markdown_headers(
-                                investigation.get("dictamen_text", "")
-                            )
-                            draft_extras = investigation.get("draft_extras") or {}
-                            if str(dictamen_text).startswith("[ERR"):
-                                ui.notify(str(dictamen_text), type="negative")
-                                return
-                            _DRAFT_CASES[case_id] = {
-                                "case_id": case_id,
-                                "status": "draft",
-                                "object_description": obj_desc,
-                                "intake_notes": notes_val,
-                                "context_notes": market_context_notes,
-                                "dictamen_text": dictamen_text,
-                                "local_image_paths": list(state["uploaded_paths"]),
-                                "evidence_urls": list(state["uploaded_paths"]),
-                                "image_path": state["uploaded_paths"][0] if state["uploaded_paths"] else "",
-                                "timestamp": time.time(),
-                                "gemology_data": {},
-                                "cad_blueprint": dict(draft_extras.get("cad_blueprint") or {}),
-                                "domain_taxonomy": draft_extras.get("domain_taxonomy") or "",
-                                "forensic_report": draft_extras.get("forensic_report") or {},
-                                "market_valuation_report": draft_extras.get("market_valuation_report") or {},
-                                "logistics_arbitrage_report": draft_extras.get("logistics_arbitrage_report") or {},
-                                "question_answers": {},
-                                "resolved_questions": [],
-                                "logistics_intelligence": {},
-                                "successful_queries": draft_extras.get("successful_queries") or [],
-                            }
-                            state["last_dictamen"] = dictamen_text
-                            state["active_case_id"] = case_id
-                            state["selected_case_id"] = case_id
-                            navigate("detail", case_id)
+                            try:
+                                spot_info = market_engine.get_metal_spot_prices()
+                                case_id = f"EXP-CH-{os.urandom(2).hex().upper()}"
+
+                                human_parts = []
+                                if (in_weight.value or "").strip():
+                                    human_parts.append(f"Peso físico: {in_weight.value.strip()}")
+                                if (in_dimensions.value or "").strip():
+                                    human_parts.append(f"Medidas/Diámetro/Banda: {in_dimensions.value.strip()}")
+                                if (in_gems.value or "").strip():
+                                    human_parts.append(
+                                        f"Conteo y medidas reales de gemas verificadas por humano: {in_gems.value.strip()}"
+                                    )
+                                if (extra_notes.value or "").strip():
+                                    human_parts.append(f"Notas adicionales: {extra_notes.value.strip()}")
+
+                                notes_val = " | ".join(human_parts)
+                                obj_desc = (
+                                    notes_val
+                                    if notes_val
+                                    else "Pieza de joyería/colección analizada por visión artificial"
+                                )
+                                market_context_notes = (
+                                    f"{notes_val}\n\n{JEWELRY_RIGOR_INSTRUCTIONS}\n"
+                                    f"[SPOT MARKET DATA - Gold: {spot_info.get('GOLD_EUR_PER_GRAM')}€/g, "
+                                    f"Silver: {spot_info.get('SILVER_EUR_PER_GRAM')}€/g]"
+                                )
+
+                                council_fn = partial(
+                                    expert_council.run_investigation,
+                                    obj_desc,
+                                    market_context_notes,
+                                    list(state["uploaded_paths"]),
+                                    case_id,
+                                    agent,
+                                    JEWELRY_RIGOR_INSTRUCTIONS,
+                                )
+                                investigation = await run.io_bound(council_fn)
+                                dictamen_text = renumber_markdown_headers(
+                                    investigation.get("dictamen_text", "")
+                                )
+                                if str(dictamen_text).startswith("[ERR"):
+                                    ui.notify(str(dictamen_text), type="negative")
+                                    return
+
+                                autosave_meta = _build_autosave_payload(
+                                    case_id,
+                                    investigation,
+                                    obj_desc=obj_desc,
+                                    notes_val=notes_val,
+                                    market_context_notes=market_context_notes,
+                                    image_paths=list(state["uploaded_paths"]),
+                                    dictamen_text=dictamen_text,
+                                )
+                                await run.io_bound(
+                                    _finalize_cloud_case,
+                                    case_id,
+                                    autosave_meta,
+                                    dictamen_text,
+                                    list(state["uploaded_paths"]),
+                                )
+
+                                state["last_dictamen"] = dictamen_text
+                                state["active_case_id"] = case_id
+                                state["selected_case_id"] = case_id
+                                ui.notify(
+                                    f"Expediente guardado como «{_default_draft_title()}»",
+                                    type="positive",
+                                )
+                                navigate("detail", case_id)
+                            except Exception as exc:
+                                ui.notify(f"Error en la investigación: {exc}", type="negative")
+                            finally:
+                                ai_loading_dialog.close()
+                                status_label.classes(add="hidden")
     
                         with ui.row().classes("w-full justify-end pt-2"):
                             editorial_button("EJECUTAR INVESTIGACIÓN Y TASACIÓN", on_click=run_investigation)
