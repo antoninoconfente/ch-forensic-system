@@ -21,6 +21,7 @@ from agents.council_prompts import (
     MARKET_PRICE_ANCHOR_DIRECTIVE,
     MODO_AUDITOR_MARKET_DIRECTIVE,
     PRECEDENTS_NATURAL_LANGUAGE_DIRECTIVE,
+    STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE,
     WEB_RAG_QUALITY_DIRECTIVE,
 )
 from agents.schemas import ForensicReport, MarketComparable, MarketValuationReport
@@ -97,6 +98,7 @@ class MarketIntelligenceAgent:
             f"{WEB_RAG_QUALITY_DIRECTIVE}\n\n"
             f"{MARKET_CASCADE_STRATEGY_DIRECTIVE}\n\n"
             f"{MARKET_PRICE_ANCHOR_DIRECTIVE}\n\n"
+            f"{STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE}\n\n"
             f"{GLOBAL_AUDIT_TRAIL_JSON_HINT}"
         )
         precedents_prompt = self._precedents_for_prompt(precedents)

@@ -1,5 +1,11 @@
 """Directivas compartidas del consejo MoE (caja negra, prosa, RAG)."""
 
+STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE = """
+REGLA DE FORMATO ESTRICTA: Tienes TERMINANTEMENTE PROHIBIDO usar formato Markdown (asteriscos **, negritas, cursivas,
+listas con guiones o numerales #) en los campos de texto, razonamientos y en las preguntas (active_questions).
+Debes redactar EXCLUSIVAMENTE en texto plano puro.
+"""
+
 GLOBAL_AUDIT_TRAIL_JSON_HINT = """
 global_audit_trail: lista de strings (puede iniciar vacía). Cada línea documenta una decisión técnica o de mercado con impacto explícito.
 """

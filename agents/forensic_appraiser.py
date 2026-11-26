@@ -15,6 +15,7 @@ from google.genai import types
 from PIL import Image
 from pydantic import ValidationError
 
+from agents.council_prompts import STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE
 from agents.forensic_prompts import (
     DOUBLE_BRAIN_DIRECTIVE,
     FORENSIC_JSON_ACTIONABLE_FIELDS,
@@ -242,7 +243,8 @@ class UniversalForensicAgent:
             "DEBES devolver exactamente esa taxonomy_key existente con reuses_existing_key=true.\n"
             "4) Crea una taxonomy_key NUEVA solo si las reglas de inspección física o la geometría CAD cambian sustancialmente "
             "(ej. reloj de sobremesa vs. reloj de pulsera), pero con el mismo parent_domain (ej. ambos RELOJERIA).\n"
-            "5) No dupliques familias por diferencias de redacción: unifica bajo la clave existente más específica compatible."
+            "5) No dupliques familias por diferencias de redacción: unifica bajo la clave existente más específica compatible.\n\n"
+            f"{STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE}"
         )
         prompt = (
             f"Caso {case_id}\n"
@@ -312,7 +314,8 @@ class UniversalForensicAgent:
             "cad_measurement_guide (texto con vistas y cotas que el plano CAD debe proyectar para esta disciplina).\n\n"
             f"{VISUAL_ANCHORING_DIRECTIVE}\n"
             "Cada ítem de inspection_checklist y authenticity_red_flags debe ser una nota de auditoría visual anclada "
-            "(sin preguntas ni interrogantes)."
+            "(sin preguntas ni interrogantes).\n\n"
+            f"{STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE}"
         )
         prompt = (
             f"Taxonomía: {taxonomy.taxonomy_key} — familia {taxonomy.parent_domain} — {taxonomy.display_name}\n"
@@ -375,7 +378,8 @@ class UniversalForensicAgent:
             f"{VISUAL_ANCHORING_DIRECTIVE}\n"
             "Usa anomalies_detected y new_protocol_insights solo para hallazgos técnicos; "
             "las peticiones al usuario van en recomendaciones (ActionableRequest), nunca mezclando varias peticiones en un solo user_prompt. "
-            "El impacto económico y de confianza solo en global_audit_trail."
+            "El impacto económico y de confianza solo en global_audit_trail.\n\n"
+            f"{STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE}"
         )
         prompt = (
             f"Caso {case_id}\n"

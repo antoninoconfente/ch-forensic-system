@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from agents.council_prompts import (
     GLOBAL_AUDIT_TRAIL_JSON_HINT,
     MODO_AUDITOR_LOGISTICS_DIRECTIVE,
+    STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE,
 )
 from agents.schemas import (
     ForensicReport,
@@ -109,6 +110,7 @@ class LogisticsArbitrageAgent:
             + ", ".join(_REFERENCE_HUBS)
             + ". Usa valores numéricos en EUR salvo indicación. Si faltan datos, estima con prudencia y documenta en transit_notes.\n\n"
             f"{MODO_AUDITOR_LOGISTICS_DIRECTIVE}\n\n"
+            f"{STRICT_PLAIN_TEXT_OUTPUT_DIRECTIVE}\n\n"
             f"{GLOBAL_AUDIT_TRAIL_JSON_HINT}"
         )
         prompt = (

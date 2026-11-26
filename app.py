@@ -1288,6 +1288,12 @@ def index_page():
                                 "Procesando Inteligencia Artificial... Por favor, espere."
                             ).classes("text-lg text-center px-6")
 
+                        def _safe_close_loading_dialog() -> None:
+                            try:
+                                ai_loading_dialog.close()
+                            except Exception:
+                                pass
+
                         async def run_investigation():
                             if source_radio.value == "URL / Google Drive" and not state["uploaded_paths"] and urls_input_ref["widget"]:
                                 raw = urls_input_ref["widget"].value or ""
@@ -1345,6 +1351,8 @@ def index_page():
                                     investigation.get("dictamen_text", "")
                                 )
                                 if str(dictamen_text).startswith("[ERR"):
+                                    _safe_close_loading_dialog()
+                                    status_label.classes(add="hidden")
                                     ui.notify(str(dictamen_text), type="negative")
                                     return
 
@@ -1368,16 +1376,17 @@ def index_page():
                                 state["last_dictamen"] = dictamen_text
                                 state["active_case_id"] = case_id
                                 state["selected_case_id"] = case_id
+                                _safe_close_loading_dialog()
+                                status_label.classes(add="hidden")
                                 ui.notify(
                                     f"Expediente guardado como «{_default_draft_title()}»",
                                     type="positive",
                                 )
                                 navigate("detail", case_id)
                             except Exception as exc:
-                                ui.notify(f"Error en la investigación: {exc}", type="negative")
-                            finally:
-                                ai_loading_dialog.close()
+                                _safe_close_loading_dialog()
                                 status_label.classes(add="hidden")
+                                ui.notify(f"Error en la investigación: {exc}", type="negative")
     
                         with ui.row().classes("w-full justify-end pt-2"):
                             editorial_button("EJECUTAR INVESTIGACIÓN Y TASACIÓN", on_click=run_investigation)
