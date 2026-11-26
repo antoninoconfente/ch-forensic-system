@@ -22,14 +22,12 @@ from src.research.ai_agent import (
     relationalize_metadata,
 )
 from database.client import (
-    compose_case_summary_for_embedding,
     delete_case as delete_cloud_case,
     get_case,
     get_signed_evidence_url,
     list_cases,
     save_case,
     upload_evidence_to_storage,
-    upsert_case_embedding,
 )
 from database.models import Case, Evidence, GemologyData
 from src.research.gemology import (
@@ -367,24 +365,12 @@ def _persist_sources_from_metadata(case_id: str, metadata: dict) -> list:
     return resolved
 
 
-def _index_case_embedding_safe(case_id: str, metadata: dict, dictamen_text: str) -> None:
-    try:
-        meta = dict(metadata or {})
-        forensic = meta.get("forensic_report") or {}
-        taxonomy = (meta.get("domain_taxonomy") or forensic.get("taxonomy_key") or "").strip()
-        summary = compose_case_summary_for_embedding(case_id, meta, dictamen_text)
-        upsert_case_embedding(case_id, taxonomy, summary)
-    except Exception as exc:
-        print(f"[RAG] Indexación diferida omitida para {case_id}: {exc}", flush=True)
-
-
 def _finalize_cloud_case(case_id: str, metadata: dict, dictamen_text: str, image_sources: list | None = None):
     metadata = dict(metadata or {})
     _preserve_draft_status_on_update(metadata, case_id)
     dictamen_text = renumber_markdown_headers(dictamen_text or "")
     sources = image_sources if image_sources is not None else _persist_sources_from_metadata(case_id, metadata)
     saved = persist_cloud_case(case_id, metadata, dictamen_text, sources)
-    _index_case_embedding_safe(case_id, metadata, dictamen_text)
     _DRAFT_CASES.pop(case_id, None)
     return saved
 
@@ -400,6 +386,8 @@ def _case_archive_state(case_id: str) -> tuple[str, str]:
     row = get_case(case_id) if case_id else None
     if row and str(row.status or "").lower() == "draft":
         return "BORRADOR EN NUBE (SIN ARCHIVAR)", "draft"
+    if row and str(row.status or "").lower() == "dictaminado":
+        return "DICTAMINADO (LISTO PARA ARCHIVAR)", "dictaminado"
     if row:
         return "ARCHIVADO EN NUBE", "archived"
     return "BORRADOR EN MEMORIA (NO GUARDADO)", "draft"
@@ -445,10 +433,12 @@ def _case_needs_archive(case_id: str, metadata: dict | None = None) -> bool:
 def _preserve_draft_status_on_update(stored: dict, case_id: str) -> None:
     """Evita que un recálculo parcial promueva el expediente a 'active' por accidente."""
     current = str(stored.get("status") or "").lower()
-    if current in _FORMAL_ARCHIVE_STATUSES:
+    if current in _FORMAL_ARCHIVE_STATUSES or current == "dictaminado":
         return
     row = get_case(case_id) if case_id else None
     db_status = str(row.status if row else current or "draft").lower()
+    if db_status == "dictaminado":
+        return
     if db_status == "draft" or current == "draft" or not row:
         stored["status"] = "draft"
 
@@ -503,6 +493,17 @@ def _build_autosave_payload(
     }
     propagate_audit_trail_to_root(payload)
     sync_master_global_audit_trail(payload)
+    from utils.expedient_workflow import apply_expedient_state_transition
+
+    payload = apply_expedient_state_transition(payload, dictamen_text)
+    suggested = (investigation.get("draft_extras") or {}).get("suggested_status") or investigation.get(
+        "suggested_status"
+    )
+    if str(suggested or "").lower() == "dictaminado" or str(payload.get("status") or "").lower() == "dictaminado":
+        payload["status"] = "dictaminado"
+        payload["workflow_state"] = payload.get("workflow_state") or "DICTAMINADO"
+    elif str(payload.get("status") or "").lower() != "dictaminado":
+        payload["status"] = "draft"
     return payload
 
 
@@ -851,6 +852,13 @@ def commit_ficha_answers(
     sync_master_global_audit_trail(stored)
     if extras.get("cad_blueprint"):
         stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
+    if extras.get("domain_taxonomy"):
+        stored["domain_taxonomy"] = extras["domain_taxonomy"]
+    from utils.expedient_workflow import apply_expedient_state_transition
+
+    stored = apply_expedient_state_transition(stored, updated)
+    if str(extras.get("suggested_status") or investigation.get("suggested_status") or "").lower() == "dictaminado":
+        stored["status"] = "dictaminado"
     _preserve_draft_status_on_update(stored, case_id)
     if case_id in _DRAFT_CASES:
         stored["local_image_paths"] = list(images)

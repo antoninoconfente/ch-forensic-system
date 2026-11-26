@@ -192,6 +192,28 @@ def _extract_true_market_valuation(dictamen: str, metadata: dict = None) -> dict
     meta = metadata or {}
     text = dictamen or ""
 
+    from utils.expedient_workflow import market_valuation_is_computed
+
+    market_struct = meta.get("market_valuation_report") or {}
+    if market_valuation_is_computed(market_struct):
+        low = str(market_struct.get("estimated_value_low") or "").strip()
+        high = str(market_struct.get("estimated_value_high") or "").strip()
+        cur = str(market_struct.get("currency") or "EUR").strip()
+        label = f"{low} – {high} {cur}".strip(" –")
+        try:
+            low_n = float(str(low).replace(".", "").replace(",", "."))
+            high_n = float(str(high).replace(".", "").replace(",", "."))
+            mid = round((low_n + high_n) / 2.0, 2)
+        except (TypeError, ValueError):
+            mid = None
+        return {
+            "display": label,
+            "mid_eur": mid,
+            "wholesale": "—",
+            "auction": "—",
+            "retail": label,
+        }
+
     gem_data = meta.get("gemology_data") or {}
     gem_val = (gem_data.get("valuation") or {}).get("piece_eur")
     if gem_data.get("_user_saved") and gem_data.get("applies") and gem_val:

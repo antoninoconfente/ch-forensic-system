@@ -17,6 +17,7 @@ from agents.schemas import (
     serial_decoding_dict,
 )
 from utils.audit_trail import propagate_audit_trail_to_root, sync_master_global_audit_trail
+from utils.expedient_workflow import apply_expedient_state_transition
 from utils.markdown_format import renumber_markdown_headers
 from src.research.ai_agent import LocalAIAgent
 
@@ -605,12 +606,34 @@ class ExpertCouncilOrchestrator:
         if dossier_seed.get("global_audit_trail"):
             draft_extras["global_audit_trail"] = dossier_seed["global_audit_trail"]
 
+        pipeline_meta = {
+            **dossier_seed,
+            "domain_taxonomy": draft_extras.get("domain_taxonomy") or "",
+            "question_answers": prior_extras.get("question_answers") or {},
+            "resolved_questions": prior_extras.get("resolved_questions") or [],
+            "status": prior_extras.get("status") or "draft",
+        }
+        pipeline_meta = apply_expedient_state_transition(pipeline_meta, dictamen_text)
+        draft_extras["workflow_state"] = pipeline_meta.get("workflow_state")
+        if str(pipeline_meta.get("status") or "").lower() == "dictaminado":
+            draft_extras["suggested_status"] = "dictaminado"
+
+        if (case_id or "").strip() and forensic_dump:
+            from database.client import sync_case_embedding_from_expedient
+
+            try:
+                sync_case_embedding_from_expedient(case_id, pipeline_meta, dictamen_text)
+            except Exception as exc:
+                print(f"[RAG] Indexación post-MoE omitida ({case_id}): {exc}", flush=True)
+
         return {
             "dictamen_text": dictamen_text,
             "forensic_report": forensic_dump,
             "market_valuation_report": market_dump,
             "logistics_arbitrage_report": logistics_dump,
             "draft_extras": draft_extras,
+            "workflow_state": pipeline_meta.get("workflow_state"),
+            "suggested_status": draft_extras.get("suggested_status"),
             "master_global_audit_trail": draft_extras.get("master_global_audit_trail"),
             "global_audit_trail": draft_extras.get("global_audit_trail"),
         }
@@ -683,9 +706,21 @@ class ExpertCouncilOrchestrator:
         propagate_audit_trail_to_root(stored)
         sync_master_global_audit_trail(stored)
 
+        refreshed_dictamen = updated_dictamen or dictamen_text
+        stored = apply_expedient_state_transition(stored, refreshed_dictamen)
+        if (case_id or "").strip() and stored.get("forensic_report"):
+            from database.client import sync_case_embedding_from_expedient
+
+            try:
+                sync_case_embedding_from_expedient(case_id, stored, refreshed_dictamen)
+            except Exception as exc:
+                print(f"[RAG] Indexación post-recálculo omitida ({case_id}): {exc}", flush=True)
+
         return {
-            "dictamen_text": updated_dictamen or dictamen_text,
+            "dictamen_text": refreshed_dictamen,
             "market_valuation_report": stored.get("market_valuation_report"),
+            "workflow_state": stored.get("workflow_state"),
+            "suggested_status": stored.get("status") if stored.get("workflow_state") == "DICTAMINADO" else None,
             "global_audit_trail": stored.get("global_audit_trail"),
             "master_global_audit_trail": stored.get("master_global_audit_trail"),
             "successful_queries": stored.get("successful_queries"),

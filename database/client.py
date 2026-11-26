@@ -747,30 +747,94 @@ def generate_text_embedding(text: str) -> list[float]:
 
 
 def compose_case_summary_for_embedding(case_id: str, metadata: dict, dictamen_text: str) -> str:
-    """Texto consolidado para memoria vectorial de galería."""
+    """Texto consolidado para memoria vectorial de galería (post-peritaje forense)."""
     meta = dict(metadata or {})
     forensic = dict(meta.get("forensic_report") or {})
     market = dict(meta.get("market_valuation_report") or {})
     logistics = dict(meta.get("logistics_arbitrage_report") or {})
+    attrs = forensic.get("key_attributes") or {}
+    if not isinstance(attrs, dict):
+        attrs = {}
+
+    tipologia = (
+        forensic.get("category_name")
+        or attrs.get("tipologia_objeto")
+        or attrs.get("tipologia")
+        or meta.get("object_description")
+        or "Pieza"
+    )
+    marca = (
+        attrs.get("marca")
+        or attrs.get("brand")
+        or attrs.get("maker")
+        or meta.get("custom_brand")
+        or "Marca no identificada"
+    )
+    modelo = (
+        attrs.get("modelo")
+        or attrs.get("model")
+        or attrs.get("referencia")
+        or attrs.get("reference")
+        or meta.get("custom_title")
+        or "Modelo no identificado"
+    )
+    descripcion = (forensic.get("technical_summary") or meta.get("intake_notes") or "").strip()
+    headline = f"{tipologia} {marca} {modelo} - {descripcion[:800]}".strip()
+
     materials = ", ".join(forensic.get("primary_materials") or [])
-    attrs = "; ".join(f"{k}: {v}" for k, v in (forensic.get("key_attributes") or {}).items())
+    attrs_line = "; ".join(f"{k}: {v}" for k, v in attrs.items() if str(v or "").strip())
+    taxonomy = meta.get("domain_taxonomy") or forensic.get("taxonomy_key") or "—"
     lines = [
+        headline,
         f"EXPEDIENTE {case_id}",
-        f"Marca: {meta.get('custom_brand') or '—'}",
-        f"Título: {meta.get('custom_title') or meta.get('object_description') or '—'}",
-        f"Taxonomía: {meta.get('domain_taxonomy') or forensic.get('taxonomy_key') or '—'}",
-        f"Categoría forense: {forensic.get('category_name') or '—'}",
+        f"Taxonomía: {taxonomy}",
         f"Materiales: {materials or '—'}",
         f"Pureza/grado: {forensic.get('purity_or_grade') or '—'}",
         f"Peso/volumen: {forensic.get('estimated_weight_or_volume') or '—'}",
-        f"Atributos: {attrs or '—'}",
-        f"Resumen forense: {(forensic.get('technical_summary') or '')[:1200]}",
+        f"Atributos: {attrs_line or '—'}",
         f"Tendencia demanda (mercado): {market.get('demand_trend') or '—'}",
         f"Rango valoración CH: {market.get('estimated_value_low')} - {market.get('estimated_value_high')} {market.get('currency') or 'EUR'}",
         f"HS logístico: {logistics.get('hs_code_estimate') or '—'} · Hub: {logistics.get('recommended_primary_hub') or '—'}",
         f"Dictamen (extracto): {(dictamen_text or '')[:2500]}",
     ]
-    return "\n".join(line for line in lines if line)
+    return "\n".join(line for line in lines if line and str(line).strip())
+
+
+def resolve_expedient_taxonomy_key(metadata: dict) -> str | None:
+    """Taxonomía real del peritaje; evita persistir GENERAL vacío."""
+    meta = dict(metadata or {})
+    forensic = meta.get("forensic_report") or {}
+    if not isinstance(forensic, dict):
+        forensic = {}
+    raw = str(forensic.get("taxonomy_key") or meta.get("domain_taxonomy") or "").strip()
+    if raw and raw.upper() not in ("GENERAL", "UNKNOWN"):
+        return normalize_snake_key(raw)
+    category = str(forensic.get("category_name") or "").strip()
+    if category:
+        return normalize_snake_key(category)
+    return None
+
+
+def sync_case_embedding_from_expedient(case_id: str, metadata: dict, dictamen_text: str = "") -> bool:
+    """Indexa el expediente solo tras ForensicReport utilizable (fin del pipeline MoE)."""
+    cid = (case_id or "").strip()
+    if not cid:
+        return False
+    meta = dict(metadata or {})
+    forensic = meta.get("forensic_report") or {}
+    if not isinstance(forensic, dict) or not forensic:
+        return False
+    summary_seed = (forensic.get("technical_summary") or "").strip()
+    if not summary_seed:
+        return False
+    taxonomy = resolve_expedient_taxonomy_key(meta)
+    if not taxonomy:
+        return False
+    meta["domain_taxonomy"] = taxonomy
+    summary = compose_case_summary_for_embedding(cid, meta, dictamen_text)
+    if len(summary.strip()) < 48:
+        return False
+    return upsert_case_embedding(cid, taxonomy, summary)
 
 
 def upsert_case_embedding(case_id: str, taxonomy_key: str, summary_text: str) -> bool:
