@@ -379,6 +379,8 @@ def _index_case_embedding_safe(case_id: str, metadata: dict, dictamen_text: str)
 
 
 def _finalize_cloud_case(case_id: str, metadata: dict, dictamen_text: str, image_sources: list | None = None):
+    metadata = dict(metadata or {})
+    _preserve_draft_status_on_update(metadata, case_id)
     dictamen_text = renumber_markdown_headers(dictamen_text or "")
     sources = image_sources if image_sources is not None else _persist_sources_from_metadata(case_id, metadata)
     saved = persist_cloud_case(case_id, metadata, dictamen_text, sources)
@@ -403,13 +405,52 @@ def _case_archive_state(case_id: str) -> tuple[str, str]:
     return "BORRADOR EN MEMORIA (NO GUARDADO)", "draft"
 
 
-def _case_needs_archive(case_id: str) -> bool:
+_FORMAL_ARCHIVE_STATUSES = frozenset({"active", "archived", "consolidated"})
+
+
+def _case_is_formally_archived(case_id: str, metadata: dict | None = None) -> bool:
+    """True solo cuando el usuario ya archivó formalmente el expediente."""
     if _case_is_draft(case_id):
+        return False
+    meta = dict(metadata or {})
+    if case_id and not meta:
+        meta = dict(get_case_view_model(case_id) or cloud_case_metadata(case_id) or {})
+    status = str(meta.get("status") or "").lower()
+    if status in _FORMAL_ARCHIVE_STATUSES:
         return True
     row = get_case(case_id) if case_id else None
-    if row and str(row.status or "").lower() == "draft":
+    if row and str(row.status or "").lower() in _FORMAL_ARCHIVE_STATUSES:
         return True
-    return row is None
+    return False
+
+
+def _case_needs_archive(case_id: str, metadata: dict | None = None) -> bool:
+    """El botón de archivo se muestra mientras no esté formalmente archivado."""
+    if _case_is_draft(case_id):
+        return True
+    meta = dict(metadata or {})
+    if case_id and not meta.get("status"):
+        meta = dict(get_case_view_model(case_id) or cloud_case_metadata(case_id) or {})
+    status = str(meta.get("status") or "").lower()
+    if status == "draft" or not status:
+        return True
+    if _case_is_formally_archived(case_id, meta):
+        return False
+    row = get_case(case_id) if case_id else None
+    if row is None:
+        return True
+    return str(row.status or "").lower() == "draft"
+
+
+def _preserve_draft_status_on_update(stored: dict, case_id: str) -> None:
+    """Evita que un recálculo parcial promueva el expediente a 'active' por accidente."""
+    current = str(stored.get("status") or "").lower()
+    if current in _FORMAL_ARCHIVE_STATUSES:
+        return
+    row = get_case(case_id) if case_id else None
+    db_status = str(row.status if row else current or "draft").lower()
+    if db_status == "draft" or current == "draft" or not row:
+        stored["status"] = "draft"
 
 
 def _default_draft_title() -> str:
@@ -810,6 +851,7 @@ def commit_ficha_answers(
     sync_master_global_audit_trail(stored)
     if extras.get("cad_blueprint"):
         stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
+    _preserve_draft_status_on_update(stored, case_id)
     if case_id in _DRAFT_CASES:
         stored["local_image_paths"] = list(images)
         stored["evidence_urls"] = list(images)
@@ -1532,7 +1574,7 @@ def index_page():
         render_top_bar(f"REF // {case_id}")
 
         archive_label, archive_variant = _case_archive_state(case_id)
-        needs_archive = _case_needs_archive(case_id)
+        needs_archive = _case_needs_archive(case_id, case_metadata)
 
         with ui.row().classes("w-full justify-between items-end pb-5 border-b border-[#141413] gap-6"):
             with ui.column().classes("gap-1"):
