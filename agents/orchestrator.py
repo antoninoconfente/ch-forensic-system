@@ -476,6 +476,9 @@ class ExpertCouncilOrchestrator:
         logistics_report: LogisticsArbitrageReport | None = None
         rubric_version: int | None = None
         successful_queries: list[str] = []
+        forensic_dump = None
+        market_dump = None
+        logistics_dump = None
 
         _council_log("[CONSEJO 1/3] Agente forense universal · protocolo y peritaje multimodal")
         forensic_report = self.forensic_agent.appraise(
@@ -559,6 +562,19 @@ class ExpertCouncilOrchestrator:
             parsed_forensic = merge_forensic_historical_fields(prior_forensic_report, parsed_forensic)
 
         if parsed_forensic is not None:
+            forensic_dump = _forensic_report_dict(parsed_forensic)
+        elif forensic_report is not None:
+            if hasattr(forensic_report, "model_dump"):
+                forensic_dump = _forensic_report_dict(ForensicReport.model_validate(forensic_report))
+            else:
+                forensic_dump = dict(forensic_report)
+
+        if market_report is not None:
+            market_dump = market_report.model_dump()
+        if logistics_report is not None:
+            logistics_dump = logistics_report.model_dump()
+
+        if parsed_forensic is not None:
             dictamen_text = _append_forensic_dictamen(dictamen_text, parsed_forensic)
         dictamen_text = _append_market_dictamen(dictamen_text, market_report)
         dictamen_text = _append_logistics_dictamen(dictamen_text, logistics_report)
@@ -573,19 +589,14 @@ class ExpertCouncilOrchestrator:
                 "object_description_hint": parsed_forensic.category_name,
                 "successful_queries": successful_queries,
             }
-        if market_report is not None:
-            draft_extras["market_valuation_report"] = market_report.model_dump()
-        draft_extras["logistics_arbitrage_report"] = logistics_report.model_dump()
+        if market_dump is not None:
+            draft_extras["market_valuation_report"] = market_dump
+        if logistics_dump is not None:
+            draft_extras["logistics_arbitrage_report"] = logistics_dump
         dossier_seed = {
             "forensic_report": forensic_dump or prior_forensic_report or {},
-            "market_valuation_report": (
-                market_report.model_dump() if market_report else prior_extras.get("market_valuation_report") or {}
-            ),
-            "logistics_arbitrage_report": (
-                logistics_report.model_dump()
-                if logistics_report
-                else prior_extras.get("logistics_arbitrage_report") or {}
-            ),
+            "market_valuation_report": market_dump or prior_extras.get("market_valuation_report") or {},
+            "logistics_arbitrage_report": logistics_dump or prior_extras.get("logistics_arbitrage_report") or {},
         }
         propagate_audit_trail_to_root(dossier_seed)
         sync_master_global_audit_trail(dossier_seed)
@@ -594,20 +605,11 @@ class ExpertCouncilOrchestrator:
         if dossier_seed.get("global_audit_trail"):
             draft_extras["global_audit_trail"] = dossier_seed["global_audit_trail"]
 
-        forensic_dump = None
-        if parsed_forensic is not None:
-            forensic_dump = _forensic_report_dict(parsed_forensic)
-        elif forensic_report is not None:
-            if hasattr(forensic_report, "model_dump"):
-                forensic_dump = _forensic_report_dict(ForensicReport.model_validate(forensic_report))
-            else:
-                forensic_dump = dict(forensic_report)
-
         return {
             "dictamen_text": dictamen_text,
             "forensic_report": forensic_dump,
-            "market_valuation_report": market_report.model_dump() if market_report else None,
-            "logistics_arbitrage_report": logistics_report.model_dump(),
+            "market_valuation_report": market_dump,
+            "logistics_arbitrage_report": logistics_dump,
             "draft_extras": draft_extras,
             "master_global_audit_trail": draft_extras.get("master_global_audit_trail"),
             "global_audit_trail": draft_extras.get("global_audit_trail"),
