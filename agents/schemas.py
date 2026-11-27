@@ -125,6 +125,37 @@ class ActionableRequest(BaseModel):
         return text
 
 
+class DetectedGemstone(BaseModel):
+    """Piedra estructurada detectada en peritaje forense (joyería)."""
+
+    model_config = LLM_RESPONSE_CONFIG
+
+    gem_type: str = Field(..., min_length=1, description="Especie o tipo (ej. Diamante, Zafiro).")
+    cut: str = Field(default="", description="Talla observable (ej. Brillante, Cabujón).")
+    estimated_carats: str = Field(
+        default="",
+        description="Quilates estimados como string legible (ej. ~0.10 ct).",
+    )
+    is_main_stone: bool = Field(
+        default=False,
+        description="True si es la gema principal de la pieza (como máximo una).",
+    )
+
+    @field_validator("gem_type", "cut", "estimated_carats", mode="before")
+    @classmethod
+    def strip_gem_text(cls, value):
+        return str(value or "").strip()
+
+    @field_validator("is_main_stone", mode="before")
+    @classmethod
+    def coerce_main_stone(cls, value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in ("1", "true", "yes", "sí", "si", "principal")
+
+
 class SynthesizedRubric(BaseModel):
     model_config = LLM_RESPONSE_CONFIG
 
@@ -176,6 +207,13 @@ class ForensicReport(BaseModel):
     preguntas_resueltas: list[ResolvedRequest] = Field(
         default_factory=list,
         description="Historial de preguntas ya respondidas.",
+    )
+    detected_gemstones: list[DetectedGemstone] = Field(
+        default_factory=list,
+        description=(
+            "Lista estructurada de piedras detectadas. Cada entrada: gem_type, cut, "
+            "estimated_carats, is_main_stone."
+        ),
     )
 
     @field_validator("global_audit_trail", mode="before")
@@ -235,6 +273,14 @@ class ForensicReport(BaseModel):
             data["preguntas_resueltas"] = [item for item in raw_resolved if isinstance(item, dict)]
         else:
             data["preguntas_resueltas"] = []
+
+        raw_gems = data.get("detected_gemstones")
+        if raw_gems is None:
+            data["detected_gemstones"] = []
+        elif isinstance(raw_gems, list):
+            data["detected_gemstones"] = [item for item in raw_gems if isinstance(item, dict)]
+        else:
+            data["detected_gemstones"] = []
 
         return data
 

@@ -19,6 +19,20 @@ Si detectas un número de serie, edición limitada o código de fábrica en la p
 - Explicar explícitamente si el serial VALIDA, CONTRADICE o deja INDETERMINADO el relato de autenticidad de la pieza, con razonamiento pericial citando el dato observado.
 """
 
+FORENSIC_STRICT_QUESTIONS_USE_DIRECTIVE = """
+USO ESTRICTO DE PREGUNTAS: La lista de requerimientos (recomendaciones / active_questions) es EXCLUSIVAMENTE para solicitar acciones físicas (medir, pesar, test químico). Tienes TERMINANTEMENTE PROHIBIDO usarla para comunicar tus observaciones o hipótesis. Todo tu razonamiento va SOLO en tu global_audit_trail.
+"""
+
+FORENSIC_JSON_GEMSTONES_FIELDS = """
+detected_gemstones: lista obligatoria en el JSON (usa [] si no hay piedras). Cada elemento debe incluir:
+  gem_type — especie o tipo (ej. Diamante, Zafiro, Cuarzo bajo hipótesis)
+  cut — talla observable (ej. Brillante, Baguette, Cabujón)
+  estimated_carats — quilates estimados como string (ej. ~0.10 ct)
+  is_main_stone — boolean; exactamente una piedra puede ser true cuando hay gema principal
+En joyería con engastes múltiples debes aislar y contar TODAS las piedras visibles o inferibles en este array, sin limitarte al párrafo del technical_summary.
+Las hipótesis de material (ej. zafiro vs cuarzo) se documentan en global_audit_trail, nunca como pseudo-preguntas en recomendaciones.
+"""
+
 DOUBLE_BRAIN_DIRECTIVE = """
 DOBLE CEREBRO — ActionableRequest (OBLIGATORIO EN JSON recomendaciones):
 - Fase 1 — internal_reasoning: deduce técnicamente qué falta (punzones, sulfatación, aleación, medida concreta). Solo para el sistema; nunca debe filtrarse a la UI.

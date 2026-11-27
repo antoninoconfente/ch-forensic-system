@@ -53,6 +53,44 @@ def _ui_options(options):
     return list(options)
 
 
+def _format_main_stone_flag(value) -> str:
+    if value is True:
+        return "True"
+    if value is False:
+        return "False"
+    if str(value or "").strip().lower() in ("1", "true", "yes", "sí", "si", "principal"):
+        return "True"
+    return "False"
+
+
+def render_detected_gemstones_block(case_data: dict) -> bool:
+    """Lista visual de piedras del ForensicReport (detected_gemstones). Devuelve True si se pintó."""
+    forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}
+    raw = forensic.get("detected_gemstones") or []
+    items = [g for g in raw if isinstance(g, dict) and str(g.get("gem_type") or "").strip()]
+    if not items:
+        return False
+
+    ui.html(
+        "<span class='micro-coord mt-2 block'>"
+        "/// GEMAS DETECTADAS POR IA (PERITAJE FORENSE)"
+        "</span>"
+    )
+    with ui.column().classes("w-full gap-2 human-evidence-box mt-2 p-3"):
+        for gem in items:
+            gem_type = str(gem.get("gem_type") or "Piedra").strip()
+            cut = str(gem.get("cut") or "no especificada").strip()
+            carats = str(gem.get("estimated_carats") or "—").strip()
+            if carats and not carats.casefold().endswith("ct"):
+                carats = f"~{carats} ct"
+            main_flag = _format_main_stone_flag(gem.get("is_main_stone"))
+            line = f"💎 {gem_type}, Talla {cut}, {carats} (Principal: {main_flag})"
+            ui.html(
+                f"<p class='m-0 text-[12px] text-[#141413] leading-relaxed'>{html.escape(line)}</p>"
+            )
+    return True
+
+
 def render_logistics_arbitrage_report(report: dict, val_display: str) -> None:
     if not report:
         ui.html(

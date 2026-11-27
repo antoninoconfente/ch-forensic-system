@@ -88,6 +88,7 @@ from ui.blueprints import _infer_cad_defaults_from_dictamen
 from ui.detail_discipline import (
     mount_admin_xray_dialog,
     xray_audit_visible,
+    render_detected_gemstones_block,
     render_gemology_calculator,
     render_gemology_empty_state,
     render_jewelry_cad_laboratory,
@@ -1930,6 +1931,7 @@ def index_page():
                         else seeded_gem
                     )
                     with ui.column().classes("w-full gap-5 human-evidence-box"):
+                        render_detected_gemstones_block(discipline_ctx)
                         render_jewelry_cad_laboratory(
                             saved_cad=saved_cad,
                             can_save=can_save_expedient(),
@@ -2041,6 +2043,7 @@ def index_page():
                     if can_save_expedient():
                         editorial_button("RECALCULAR TASACIÓN Y BUYERS", on_click=refresh_appraisal)
 
+                render_detected_gemstones_block(discipline_ctx)
                 ui.markdown(categorized["mercado"]).classes("editorial-reader w-full")
 
             elif active_tab == "herramientas":

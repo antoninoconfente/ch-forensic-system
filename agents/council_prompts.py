@@ -78,3 +78,13 @@ LEGACY_DICTAMEN_JSON_PROSE_DIRECTIVE = """
 PROHIBIDO FORMATO JSON EN DICTAMEN PÚBLICO: En las secciones «MÓDULO DE TASACIÓN» y «ESTRATEGIA DE MERCADO Y BUYER SEARCH»
 nunca incluyas llaves { }, arrays JSON, claves técnicas ni bloques de código. Redacta recomendaciones de puesta en valor y público objetivo en prosa profesional.
 """
+
+MARKET_FORENSIC_HYPOTHESIS_ALIGNMENT_DIRECTIVE = """
+ALINEACIÓN FORENSE OBLIGATORIA: Si el forense plantea dudas razonables o múltiples hipótesis sobre un material (ej. Zafiro vs Cuarzo), tus Escenarios de Valoración DEBEN tasar exactamente esas hipótesis. Tienes prohibido inventar escenarios genéricos desconectados del ForensicReport, de detected_gemstones y del global_audit_trail forense.
+"""
+
+MARKET_QUOTED_GEM_ASSETS_FORMULA_DIRECTIVE = """
+FÓRMULA DE ACTIVOS COTIZADOS: Si el campo detected_gemstones del ForensicReport contiene datos, TIENES PROHIBIDO calcular solo el oro. Debes aplicar esta fórmula matemática:
+Valor Intrínseco Total = (Metal por peso) + (Gema Principal) + (Diamantes Secundarios).
+Asigna un valor por quilate basándote en la cotización global aproximada (Rapaport/Gemval) y desglosa este sumatorio matemáticamente en tu global_audit_trail (metal EUR, principal EUR/ct, secundarios EUR/ct y total).
+"""
