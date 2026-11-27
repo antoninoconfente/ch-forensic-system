@@ -1941,6 +1941,10 @@ def index_page():
                         )
                         if updated and not str(updated).startswith("[ERR"):
                             state["last_dictamen"] = updated
+                            ui.notify(
+                                "Prueba anexada y tasación recalculada con escenario confirmado",
+                                type="positive",
+                            )
                             refresh_ui()
                         return updated
 
@@ -2093,6 +2097,7 @@ def index_page():
                             can_save=can_save_expedient(),
                             cad_payload_holder=cad_payload_holder,
                             on_apply_cad=apply_cad_blueprint,
+                            case_data=discipline_ctx,
                         )
                         render_gemology_calculator(
                             case_id=case_id,

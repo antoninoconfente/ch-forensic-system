@@ -64,6 +64,29 @@ def _hybrid_catalog_input(label: str, value: str, catalog: list[str]) -> ui.inpu
     ).classes("w-full")
 
 
+def _open_catalog_select(
+    label: str,
+    value: str | None,
+    catalog: list[str],
+    *,
+    default_first_if_empty: bool = True,
+) -> ui.select:
+    """Select con catálogo + texto libre (combobox Quasar)."""
+    options = _ui_options(catalog)
+    chosen = str(value or "").strip()
+    if chosen and chosen not in options:
+        options = options + [chosen]
+    if chosen:
+        select_value = chosen
+    elif default_first_if_empty and options:
+        select_value = options[0]
+    else:
+        select_value = None
+    widget = ui.select(options, label=label, value=select_value).classes("w-full")
+    widget.props('use-input new-value-mode="add-unique" input-debounce="0"')
+    return widget
+
+
 def render_forensic_gemstones_status(case_data: dict) -> None:
     """Muestra gemas forenses o mensaje vacío (sin tablas a cero)."""
     if render_detected_gemstones_block(case_data):
@@ -272,26 +295,34 @@ def render_expert_evidence_proactive_panel(
             if not text:
                 ui.notify("Escriba la conclusión pericial antes de recalcular.", type="warning")
                 return
+            batch = list(upload_mem)
+            note_area.value = ""
+            upload_mem.clear()
+            pending_uploads.text = "Ningún archivo en cola"
+            try:
+                upload_widget.reset()
+            except Exception:
+                pass
+            ui.notify("Recalculando…", type="info")
             status.text = "⏳ ANEXANDO PRUEBA Y RECALCULANDO EXPEDIENTE…"
             status.classes(remove="hidden")
             try:
-                batch = list(upload_mem)
                 result = on_attach_and_recalculate(text, batch)
                 if hasattr(result, "__await__"):
                     result = await result
-                if str(result or "").startswith("[ERR") or str(result or "").startswith("Error"):
-                    ui.notify(str(result), type="negative")
-                    return
-                note_area.value = ""
-                upload_mem.clear()
-                pending_uploads.text = "Ningún archivo en cola"
+            except Exception as exc:
                 try:
-                    upload_widget.reset()
+                    status.classes(add="hidden")
                 except Exception:
                     pass
-                ui.notify("Prueba anexada y tasación recalculada con escenario confirmado", type="positive")
-            finally:
-                status.classes(add="hidden")
+                ui.notify(f"Error en recálculo: {exc}", type="negative")
+                return
+            if str(result or "").startswith("[ERR") or str(result or "").startswith("Error"):
+                try:
+                    status.classes(add="hidden")
+                except Exception:
+                    pass
+                ui.notify(str(result), type="negative")
 
         editorial_button("Anexar Evidencia y Recalcular", on_click=_submit).classes("w-full mt-2")
 
@@ -510,6 +541,7 @@ def render_jewelry_cad_laboratory(
   can_save: bool,
   on_apply_cad: Callable[[], None],
   cad_payload_holder: dict | None = None,
+  case_data: dict | None = None,
 ) -> None:
   """Plano técnico interactivo (joyería) — pestaña II."""
   ui.html(
@@ -518,21 +550,34 @@ def render_jewelry_cad_laboratory(
     "</span>"
   )
 
-  cad_type = _hybrid_catalog_input(
+  ctx = case_data or {}
+  forensic = ctx.get("forensic_report") if isinstance(ctx.get("forensic_report"), dict) else {}
+  jewelry_meta = forensic.get("jewelry_details") if isinstance(forensic.get("jewelry_details"), dict) else {}
+  detected = [g for g in (forensic.get("detected_gemstones") or []) if isinstance(g, dict)]
+  main_stones = [g for g in detected if g.get("is_main_stone")]
+  secondary_stones = [g for g in detected if not g.get("is_main_stone")]
+
+  side_count_init = saved_cad.get("side_count")
+  if side_count_init is None:
+    side_count_init = len(secondary_stones) if secondary_stones else 0
+  else:
+    side_count_init = int(side_count_init or 0)
+
+  cad_type = _open_catalog_select(
     "1. Tipología de pieza",
-    saved_cad.get("jewelry_type", "Anillo / Sortija"),
+    saved_cad.get("jewelry_type") or jewelry_meta.get("jewelry_typology") or "Anillo / Sortija",
     list(JEWELRY_TYPES),
   )
 
   with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-3"):
-    cad_shank = _hybrid_catalog_input(
+    cad_shank = _open_catalog_select(
       "2. Estilo de Anillo / Banda",
-      saved_cad.get("shank_profile", "Tradicional (Aro redondo clásico)"),
+      saved_cad.get("shank_profile") or jewelry_meta.get("ring_style") or RING_SHANK_PROFILES[0],
       list(RING_SHANK_PROFILES),
     )
-    cad_setting = _hybrid_catalog_input(
+    cad_setting = _open_catalog_select(
       "3. Tipo de Engaste (ver dibujo III)",
-      saved_cad.get("setting_arch", "Canasta (4 o 6 garras con galería abierta)"),
+      saved_cad.get("setting_arch") or jewelry_meta.get("setting_type") or SETTING_ARCHITECTURES[0],
       list(SETTING_ARCHITECTURES),
     )
 
@@ -566,18 +611,29 @@ def render_jewelry_cad_laboratory(
       placeholder="Ej. 6.5",
     ).classes("w-full")
 
+  central_species_init = saved_cad.get("central_species")
+  if not central_species_init and main_stones:
+    central_species_init = main_stones[0].get("gem_type")
+  if not central_species_init:
+    central_species_init = "Esmeralda"
+  central_cut_init = saved_cad.get("central_cut")
+  if not central_cut_init and main_stones:
+    central_cut_init = main_stones[0].get("cut")
+  if not central_cut_init:
+    central_cut_init = "Esmeralda / Octogonal"
+
   ui.html("<span class='micro-coord mt-2'>COTA E // PIEDRA PRINCIPAL O SERIE 1 (EJ. ESMERALDAS)</span>")
   with ui.row().classes("w-full grid grid-cols-3 gap-2"):
-    c_species = ui.select(
+    c_species = _open_catalog_select(
+      "Especie",
+      central_species_init,
       list(SPECIES_DENSITY_MULTIPLIER.keys()),
-      value=saved_cad.get("central_species", "Esmeralda"),
-      label="Especie",
-    ).classes("w-full")
-    c_cut = ui.select(
-      _ui_options(GEM_CUT_CATALOG),
-      value=saved_cad.get("central_cut", "Esmeralda / Octogonal"),
-      label="Corte / Talla",
-    ).classes("w-full")
+    )
+    c_cut = _open_catalog_select(
+      "Corte / Talla",
+      central_cut_init,
+      list(GEM_CUT_CATALOG),
+    )
     c_count = ui.number(
       label="Cantidad",
       value=int(saved_cad.get("central_count", 1)),
@@ -607,25 +663,35 @@ def render_jewelry_cad_laboratory(
   ui.html("<span class='micro-coord mt-2'>COTA F // PIEDRAS SECUNDARIAS / HOMBROS / SERIE 2 (EJ. DIAMANTES)</span>")
   s_count = ui.number(
     label="Cantidad real (secundarias)",
-    value=int(saved_cad.get("side_count", 0)),
+    value=int(side_count_init),
     min=0,
     step=1,
   ).classes("w-full")
-  secondary_empty_note = ui.html(
-    "<p class='micro-coord m-0 text-[#625E57]'>Sin gemas secundarias en montura.</p>"
-  )
+  secondary_empty_note = ui.label("Sin gemas secundarias").classes("micro-coord text-[#625E57] m-0")
   secondary_fields = ui.column().classes("w-full gap-2")
+  if side_count_init > 0:
+    side_species_init = saved_cad.get("side_species") or (
+      secondary_stones[0].get("gem_type") if secondary_stones else ""
+    )
+    side_cut_init = saved_cad.get("side_cut") or (
+      secondary_stones[0].get("cut") if secondary_stones else ""
+    )
+  else:
+    side_species_init = ""
+    side_cut_init = ""
   with secondary_fields:
     with ui.row().classes("w-full grid grid-cols-3 gap-2"):
-      s_species = _hybrid_catalog_input(
+      s_species = _open_catalog_select(
         "Especie",
-        saved_cad.get("side_species", "Diamante"),
+        side_species_init or None,
         list(SPECIES_DENSITY_MULTIPLIER.keys()),
+        default_first_if_empty=bool(side_species_init),
       )
-      s_cut = _hybrid_catalog_input(
+      s_cut = _open_catalog_select(
         "Corte / Talla",
-        saved_cad.get("side_cut", "Brillante Redondo"),
+        side_cut_init or None,
         list(GEM_CUT_CATALOG),
+        default_first_if_empty=bool(side_cut_init),
       )
     with ui.row().classes("w-full grid grid-cols-2 gap-2"):
       s_l = ui.number(
@@ -889,21 +955,26 @@ def render_gemology_calculator(
                     ui.select(_ui_options(AUTHORSHIPS), value=gem_state["authorship"], label="Autoría o taller").on_value_change(
                         lambda e: (gem_state.update({"authorship": e.value}), render_controls())
                     ).classes("w-full")
-                    setting_in = _hybrid_catalog_input(
+                    setting_sel = _open_catalog_select(
                         "Engaste",
                         gem_state.get("setting") or "",
                         list(SETTINGS),
                     )
-                    setting_in.on_value_change(
+                    setting_sel.on_value_change(
                         lambda e: (gem_state.update({"setting": e.value or ""}), render_controls())
                     )
 
                 if gem_state["subject"] in ("Gema", "Gema y perla"):
                     ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE GEMA</span>")
                     with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-3 gap-3"):
-                        ui.select(_ui_options(GEM_SPECIES), value=gem_state["gem"]["species"], label="Especie").on_value_change(
-                            lambda e: (gem_state["gem"].update({"species": e.value}), render_controls())
-                        ).classes("w-full")
+                        species_sel = _open_catalog_select(
+                            "Especie",
+                            gem_state["gem"].get("species"),
+                            list(GEM_SPECIES),
+                        )
+                        species_sel.on_value_change(
+                            lambda e: (gem_state["gem"].update({"species": e.value or ""}), render_controls())
+                        )
                         ui.number(
                             label="Quilates totales (ct)",
                             value=float(gem_state["gem"].get("carat") or 0),
