@@ -754,10 +754,10 @@ def append_expert_evidence_and_recalculate(
     case_id: str,
     metadata: dict,
     text_note: str,
-    uploaded: tuple[str, bytes] | None = None,
+    uploaded_files: list[tuple[str, bytes]] | None = None,
 ) -> str:
     """Anexa prueba pericial manual y relanza el pipeline MoE completo."""
-    from utils.expert_evidence import normalize_expert_evidence
+    from utils.expert_evidence import expert_evidence_image_paths, normalize_expert_evidence
 
     note = str(text_note or "").strip()
     if not note:
@@ -765,30 +765,30 @@ def append_expert_evidence_and_recalculate(
 
     stored = dict(get_case_view_model(case_id) or metadata or {})
     entries = normalize_expert_evidence(stored.get("expert_evidence"))
-    image_path: str | None = None
+    saved_paths: list[str] = []
     new_locals: list[str] = []
 
-    if uploaded is not None:
-        name, content = uploaded
-        if content:
-            evidence_folder = os.path.join(
-                "data", "temp", "cloud", case_id or "case", "expert_evidence"
-            )
-            os.makedirs(evidence_folder, exist_ok=True)
-            extension = os.path.splitext(name)[1] or ".jpg"
-            destination = os.path.join(
-                evidence_folder,
-                f"expert_{os.urandom(3).hex()}{extension}",
-            )
-            with open(destination, "wb") as handle:
-                handle.write(content)
-            image_path = destination
-            new_locals.append(destination)
+    evidence_folder = os.path.join(
+        "data", "temp", "cloud", case_id or "case", "expert_evidence"
+    )
+    os.makedirs(evidence_folder, exist_ok=True)
+    for name, content in uploaded_files or []:
+        if not content:
+            continue
+        extension = os.path.splitext(name or "")[1] or ".jpg"
+        destination = os.path.join(
+            evidence_folder,
+            f"expert_{os.urandom(3).hex()}{extension}",
+        )
+        with open(destination, "wb") as handle:
+            handle.write(content)
+        saved_paths.append(destination)
+        new_locals.append(destination)
 
     entries.append(
         {
             "text_note": note,
-            "image_path": image_path,
+            "image_paths": saved_paths,
             "timestamp": time.time(),
         }
     )
@@ -796,7 +796,9 @@ def append_expert_evidence_and_recalculate(
 
     allow_net = case_id not in _DRAFT_CASES
     images = _analysis_image_paths(case_id, stored.get("evidence_urls") or [], allow_network=allow_net)
-    images.extend(new_locals)
+    for extra in expert_evidence_image_paths(entries):
+        if extra and extra not in images:
+            images.append(extra)
 
     prompt_ctx = (
         (stored.get("context_notes") or stored.get("intake_notes") or "")
@@ -1929,13 +1931,13 @@ def index_page():
                     render_public_ficha_spec_table(ficha_rows_list)
                     render_physical_metrology_block(discipline_ctx)
 
-                    async def _expert_evidence_recalc(text_note: str, uploaded):
+                    async def _expert_evidence_recalc(text_note: str, uploaded_files):
                         updated = await run.io_bound(
                             append_expert_evidence_and_recalculate,
                             case_id,
                             case_metadata,
                             text_note,
-                            uploaded,
+                            uploaded_files,
                         )
                         if updated and not str(updated).startswith("[ERR"):
                             state["last_dictamen"] = updated

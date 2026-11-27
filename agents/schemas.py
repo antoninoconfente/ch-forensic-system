@@ -104,9 +104,9 @@ class ExpertEvidenceEntry(BaseModel):
     model_config = LLM_RESPONSE_CONFIG
 
     text_note: str = Field(..., min_length=1, description="Conclusión de laboratorio o estado actualizado.")
-    image_path: str | None = Field(
-        default=None,
-        description="Ruta local o URL de la imagen de respaldo (test, pieza limpia).",
+    image_paths: list[str] = Field(
+        default_factory=list,
+        description="Rutas locales o URLs de respaldo (test, pieza limpia, macro).",
     )
     timestamp: float = Field(
         default_factory=time.time,
@@ -118,11 +118,39 @@ class ExpertEvidenceEntry(BaseModel):
     def strip_note(cls, value: str) -> str:
         return str(value or "").strip()
 
-    @field_validator("image_path", mode="before")
+    @field_validator("image_paths", mode="before")
     @classmethod
-    def strip_image(cls, value):
-        text = str(value or "").strip()
-        return text or None
+    def coerce_image_paths(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        if not isinstance(value, list):
+            return []
+        out: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text and text not in out:
+                out.append(text)
+        return out
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_image_path(cls, data):
+        if not isinstance(data, dict):
+            return data
+        legacy = str(data.get("image_path") or "").strip()
+        paths = data.get("image_paths")
+        if paths is None:
+            data["image_paths"] = [legacy] if legacy else []
+        elif legacy and legacy not in (paths if isinstance(paths, list) else []):
+            merged = list(paths) if isinstance(paths, list) else []
+            if legacy not in merged:
+                merged.append(legacy)
+            data["image_paths"] = merged
+        data.pop("image_path", None)
+        return data
 
 
 class ActionableRequest(BaseModel):

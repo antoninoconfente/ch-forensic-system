@@ -199,7 +199,7 @@ def render_expert_evidence_proactive_panel(
 ) -> None:
     """
     Bucle Human-in-the-Loop: solo Mesa de Auditoría.
-    on_attach_and_recalculate(text_note: str, uploaded: tuple[str, bytes] | None) -> awaitable/str
+    on_attach_and_recalculate(text_note: str, uploaded_files: list[tuple[str, bytes]]) -> awaitable/str
     """
     ui.html(
         "<span class='micro-coord mt-4 block'>/// APORTE PERICIAL PROACTIVO</span>"
@@ -212,7 +212,7 @@ def render_expert_evidence_proactive_panel(
         ui.html(
             "<p class='m-0 text-[11px] text-[#625E57] leading-relaxed'>"
             "Registre el resultado de laboratorio (refractómetro, certificado, limpieza) "
-            "y opcionalmente una foto. El sistema forzará un escenario de tasación único y definitivo."
+            "y opcionalmente varias fotos (test + pieza limpia). El sistema forzará un escenario único y definitivo."
             "</p>"
         )
 
@@ -226,8 +226,11 @@ def render_expert_evidence_proactive_panel(
             with ui.column().classes("w-full gap-1 mt-1"):
                 for idx, entry in enumerate(entries, 1):
                     note = str(entry.get("text_note") or "").strip()
-                    has_img = bool(str(entry.get("image_path") or "").strip())
-                    suffix = " · con imagen" if has_img else ""
+                    imgs = entry.get("image_paths") or []
+                    if not imgs and entry.get("image_path"):
+                        imgs = [entry.get("image_path")]
+                    n_img = len([p for p in imgs if str(p or "").strip()])
+                    suffix = f" · {n_img} imagen(es)" if n_img else ""
                     ui.html(
                         f"<p class='m-0 text-[11px] text-[#625E57]'>"
                         f"{idx}. {html.escape(note)}{suffix}</p>"
@@ -237,19 +240,23 @@ def render_expert_evidence_proactive_panel(
             label="Conclusión pericial",
             placeholder="Ej.: Gema confirmada natural con refractómetro (RI 1.762–1.770).",
         ).props("autogrow").classes("w-full")
-        upload_mem: dict[str, tuple[str, bytes]] = {}
+        upload_mem: list[tuple[str, bytes]] = []
+        pending_uploads = ui.label("Ningún archivo en cola").classes("micro-coord text-[#625E57] mt-1")
+        upload_widget = ui.upload(
+            label="Fotos de respaldo (test / pieza limpia / macro)",
+            auto_upload=True,
+            multiple=True,
+            on_upload=None,
+        ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
 
         async def _on_upload(e):
             fname, fbytes = await _extract_upload_bytes(e)
             if fbytes:
-                upload_mem["file"] = (fname, fbytes)
-                ui.notify("Foto de prueba asociada al anexo", type="positive")
+                upload_mem.append((fname, fbytes))
+                pending_uploads.text = f"{len(upload_mem)} archivo(s) listos para anexar"
+                ui.notify(f"Archivo «{fname}» añadido al anexo", type="positive")
 
-        ui.upload(
-            label="Foto de respaldo (test / pieza limpia)",
-            auto_upload=True,
-            on_upload=_on_upload,
-        ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+        upload_widget.on_upload(_on_upload)
 
         status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
 
@@ -268,8 +275,8 @@ def render_expert_evidence_proactive_panel(
             status.text = "⏳ ANEXANDO PRUEBA Y RECALCULANDO EXPEDIENTE…"
             status.classes(remove="hidden")
             try:
-                uploaded = upload_mem.get("file")
-                result = on_attach_and_recalculate(text, uploaded)
+                batch = list(upload_mem)
+                result = on_attach_and_recalculate(text, batch)
                 if hasattr(result, "__await__"):
                     result = await result
                 if str(result or "").startswith("[ERR") or str(result or "").startswith("Error"):
@@ -277,6 +284,11 @@ def render_expert_evidence_proactive_panel(
                     return
                 note_area.value = ""
                 upload_mem.clear()
+                pending_uploads.text = "Ningún archivo en cola"
+                try:
+                    upload_widget.reset()
+                except Exception:
+                    pass
                 ui.notify("Prueba anexada y tasación recalculada con escenario confirmado", type="positive")
             finally:
                 status.classes(add="hidden")

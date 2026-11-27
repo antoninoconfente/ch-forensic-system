@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from agents.schemas import ExpertEvidenceEntry
+
+
+def _image_paths_from_dict(item: dict) -> list[str]:
+    paths: list[str] = []
+    raw_list = item.get("image_paths")
+    if isinstance(raw_list, list):
+        for entry in raw_list:
+            text = str(entry or "").strip()
+            if text and text not in paths:
+                paths.append(text)
+    legacy = str(item.get("image_path") or "").strip()
+    if legacy and legacy not in paths:
+        paths.append(legacy)
+    return paths
 
 
 def normalize_expert_evidence(raw: list | None) -> list[dict]:
@@ -24,7 +37,7 @@ def normalize_expert_evidence(raw: list | None) -> list[dict]:
         out.append(
             {
                 "text_note": note,
-                "image_path": str(item.get("image_path") or "").strip() or None,
+                "image_paths": _image_paths_from_dict(item),
                 "timestamp": float(item.get("timestamp") or time.time()),
             }
         )
@@ -36,9 +49,11 @@ def expert_evidence_synthesis(entries: list | None) -> str:
     lines: list[str] = []
     for item in normalize_expert_evidence(entries if isinstance(entries, list) else []):
         note = item.get("text_note") or ""
-        img = item.get("image_path") or ""
-        if img:
-            lines.append(f"{note} [Evidencia fotográfica anexa: {img}]")
+        imgs = item.get("image_paths") or []
+        if imgs:
+            joined = "; ".join(str(p) for p in imgs[:6])
+            suffix = f" (+{len(imgs) - 6} más)" if len(imgs) > 6 else ""
+            lines.append(f"{note} [Evidencias fotográficas: {joined}{suffix}]")
         else:
             lines.append(note)
     return " /// ".join(lines)
@@ -59,9 +74,11 @@ def build_expert_resolution_prompt_block(expert_evidence: list | None) -> str:
 
 
 def expert_evidence_image_paths(entries: list | None) -> list[str]:
+    """Todas las rutas de imagen de todos los anexos (orden estable, sin duplicados)."""
     paths: list[str] = []
     for item in normalize_expert_evidence(entries if isinstance(entries, list) else []):
-        p = str(item.get("image_path") or "").strip()
-        if p and p not in paths:
-            paths.append(p)
+        for p in item.get("image_paths") or []:
+            text = str(p or "").strip()
+            if text and text not in paths:
+                paths.append(text)
     return paths
