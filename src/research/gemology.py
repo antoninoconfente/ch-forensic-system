@@ -106,8 +106,9 @@ def normalize_gemology_data(raw: dict | None) -> dict:
     for key in data["pearl"]:
         if key in (raw.get("pearl") or {}):
             data["pearl"][key] = raw["pearl"][key]
-    if raw.get("setting") in SETTINGS:
-        data["setting"] = raw["setting"]
+    setting_raw = str(raw.get("setting") or "").strip()
+    if setting_raw:
+        data["setting"] = setting_raw
     if raw.get("authorship") in AUTHORSHIPS:
         data["authorship"] = raw["authorship"]
     metal = raw.get("metal") or {}

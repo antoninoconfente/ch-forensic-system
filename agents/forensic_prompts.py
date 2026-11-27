@@ -24,13 +24,26 @@ USO ESTRICTO DE PREGUNTAS: La lista de requerimientos (recomendaciones / active_
 """
 
 FORENSIC_JSON_GEMSTONES_FIELDS = """
-detected_gemstones: lista obligatoria en el JSON (usa [] si no hay piedras). Cada elemento debe incluir:
-  gem_type — especie o tipo (ej. Diamante, Zafiro, Cuarzo bajo hipótesis)
+detected_gemstones: lista obligatoria en el JSON. Si no hay gemas secundarias ni pavé contable, debes dejar la lista estrictamente VACÍA []. No inventes piedras por defecto ni rellenes con "micro pavé" genérico.
+Cada elemento solo cuando hay piedra identificable debe incluir:
+  gem_type — especie o tipo en texto libre (Diamante, Ónix, Zafiro…)
   cut — talla observable (ej. Brillante, Baguette, Cabujón)
   estimated_carats — quilates estimados como string (ej. ~0.10 ct)
   is_main_stone — boolean; exactamente una piedra puede ser true cuando hay gema principal
-En joyería con engastes múltiples debes aislar y contar TODAS las piedras visibles o inferibles en este array, sin limitarte al párrafo del technical_summary.
+En joyería con engastes múltiples contabiliza solo piedras visibles o inferibles con evidencia; un Sello / Signet sin pavé no lleva diamantes inventados.
 Las hipótesis de material (ej. zafiro vs cuarzo) se documentan en global_audit_trail, nunca como pseudo-preguntas en recomendaciones.
+"""
+
+FORENSIC_JSON_JEWELRY_DETAILS = """
+jewelry_details: objeto opcional (joyería) con jewelry_typology, ring_style y setting_type como TEXTO LIBRE:
+  jewelry_typology — Ej.: Anillo, Sortija, Sello / Signet ring, Alianza…
+  ring_style — Ej.: Solitario, Sello / Signet, Halo, Tresillo, Toi et Moi, Art Decó… (término exacto permitido)
+  setting_type — Engaste real observado; no fuerces Pavé/Micro pavé si la pieza es sello macizo o cabujón único
+Replica los valores clave también en key_attributes (ring_style, setting_type, tipologia_objeto) para compatibilidad.
+"""
+
+FORENSIC_CONTINUOUS_LEARNING_DIRECTIVE = """
+APRENDIZAJE CONTINUO: Si en la información recuperada del historial (RAG), en expert_evidence o en las evidencias humanas previas se etiqueta el objeto con una tipología específica (ej. 'Signet ring' o 'Sello de Ónix'), DEBES adoptar exactamente esa nomenclatura en jewelry_details y en tus campos de texto libre (category_name, ring_style, setting_type, key_attributes).
 """
 
 DOUBLE_BRAIN_DIRECTIVE = """

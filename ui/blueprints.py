@@ -6,6 +6,8 @@ import html
 JEWELRY_TYPES = ["Anillo / Sortija", "Pulsera / Brazalete", "Collar / Colgante", "Otro / Objeto"]
 
 RING_SHANK_PROFILES = [
+    "Sello / Signet (Superficie lisa o cabujón incrustado)",
+    "Solitario (Piedra única)",
     "Tradicional (Aro redondo clásico)",
     "Estilo Europeo (Base cuadrada anti-giro)",
     "Catedral (Hombros elevados hacia cabeza)",
@@ -19,6 +21,7 @@ RING_SHANK_PROFILES = [
 ]
 
 SETTING_ARCHITECTURES = [
+    "Sello macizo / Sin engaste (Anillo tipo signet)",
     "Canasta (4 o 6 garras con galería abierta)",
     "Espiga / V-Prong (Garras en V abiertas)",
     "Decorativo / Corona calada",

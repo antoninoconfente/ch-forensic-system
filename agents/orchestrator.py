@@ -317,6 +317,23 @@ def _merge_cad_seed(report: ForensicReport) -> dict:
             "extra_observations",
             f"Materiales: {', '.join(report.primary_materials)}",
         )
+    jewelry = report.jewelry_details
+    if jewelry is not None:
+        if jewelry.jewelry_typology:
+            cad["jewelry_type"] = jewelry.jewelry_typology
+        if jewelry.ring_style:
+            cad["shank_profile"] = jewelry.ring_style
+        if jewelry.setting_type:
+            cad["setting_arch"] = jewelry.setting_type
+    for attr_key, cad_key in (
+        ("tipologia_objeto", "jewelry_type"),
+        ("ring_style", "shank_profile"),
+        ("setting_type", "setting_arch"),
+        ("engaste", "setting_arch"),
+    ):
+        val = str((attrs or {}).get(attr_key) or "").strip()
+        if val:
+            cad.setdefault(cad_key, val)
     cad["forensic_taxonomy"] = report.taxonomy_key
     cad["forensic_category"] = report.category_name
     return cad

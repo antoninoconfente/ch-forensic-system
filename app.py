@@ -89,6 +89,7 @@ from ui.detail_discipline import (
     mount_admin_xray_dialog,
     xray_audit_visible,
     render_detected_gemstones_block,
+    render_forensic_gemstones_status,
     render_expert_evidence_proactive_panel,
     render_gemology_calculator,
     render_gemology_empty_state,
@@ -2084,7 +2085,7 @@ def index_page():
                         else seeded_gem
                     )
                     with ui.column().classes("w-full gap-5 human-evidence-box"):
-                        render_detected_gemstones_block(discipline_ctx)
+                        render_forensic_gemstones_status(discipline_ctx)
                         render_jewelry_cad_laboratory(
                             saved_cad=saved_cad,
                             can_save=can_save_expedient(),

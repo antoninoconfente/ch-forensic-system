@@ -153,12 +153,54 @@ class ActionableRequest(BaseModel):
         return text
 
 
+class JewelryForensicDetails(BaseModel):
+    """Taxonomía híbrida de joyería: catálogo orientativo + texto libre."""
+
+    model_config = LLM_RESPONSE_CONFIG
+
+    jewelry_typology: str = Field(
+        default="",
+        description=(
+            "Tipología de pieza. Ejemplos: Anillo, Sortija, Sello / Signet ring, Alianza, "
+            "Pulsera, Colgante, Broche. Usa el término técnico exacto si no está en la lista."
+        ),
+    )
+    ring_style: str = Field(
+        default="",
+        description=(
+            "Describe el estilo técnico. Ejemplos comunes: Solitario, Sello / Signet, Halo, "
+            "Tresillo, Toi et Moi, Alianza, Art Decó, Catedral, Bypass. "
+            "Eres libre de usar el término técnico exacto si no está en esta lista."
+        ),
+    )
+    setting_type: str = Field(
+        default="",
+        description=(
+            "Engaste principal u observación de montura. Ejemplos: Garras, Bisel, Cabujón, "
+            "Canasta, Carril, Pavé (solo si aplica a toda la montura), Sin piedra, Sello macizo. "
+            "Texto libre permitido; no fuerces 'micro pavé' en anillos sello u otras piezas sin pavé."
+        ),
+    )
+
+    @field_validator("jewelry_typology", "ring_style", "setting_type", mode="before")
+    @classmethod
+    def strip_jewelry_text(cls, value):
+        return str(value or "").strip()
+
+
 class DetectedGemstone(BaseModel):
     """Piedra estructurada detectada en peritaje forense (joyería)."""
 
     model_config = LLM_RESPONSE_CONFIG
 
-    gem_type: str = Field(..., min_length=1, description="Especie o tipo (ej. Diamante, Zafiro).")
+    gem_type: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Especie o tipo en texto libre (Diamante, Ónix, Zafiro, Cuarzo…). "
+            "No inventes piedras por defecto ni listes pavé genérico sin conteo individual."
+        ),
+    )
     cut: str = Field(default="", description="Talla observable (ej. Brillante, Cabujón).")
     estimated_carats: str = Field(
         default="",
@@ -236,11 +278,15 @@ class ForensicReport(BaseModel):
         default_factory=list,
         description="Historial de preguntas ya respondidas.",
     )
+    jewelry_details: JewelryForensicDetails | None = Field(
+        default=None,
+        description="Detalle híbrido de joyería (tipología, estilo, engaste) en texto libre.",
+    )
     detected_gemstones: list[DetectedGemstone] = Field(
         default_factory=list,
         description=(
-            "Lista estructurada de piedras detectadas. Cada entrada: gem_type, cut, "
-            "estimated_carats, is_main_stone."
+            "Lista estructurada de piedras detectadas (gem_type, cut, estimated_carats, is_main_stone). "
+            "Si no hay gemas secundarias ni pavé contable, deja la lista vacía []. No inventes piedras por defecto."
         ),
     )
 
@@ -309,6 +355,12 @@ class ForensicReport(BaseModel):
             data["detected_gemstones"] = [item for item in raw_gems if isinstance(item, dict)]
         else:
             data["detected_gemstones"] = []
+
+        jd = data.get("jewelry_details")
+        if jd is None or jd == "":
+            data["jewelry_details"] = None
+        elif isinstance(jd, dict) and not any(str(v or "").strip() for v in jd.values()):
+            data["jewelry_details"] = None
 
         return data
 

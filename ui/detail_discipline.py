@@ -53,6 +53,29 @@ def _ui_options(options):
     return list(options)
 
 
+def _hybrid_catalog_input(label: str, value: str, catalog: list[str]) -> ui.input:
+    """Campo híbrido: catálogo orientativo + texto libre."""
+    sample = "; ".join(catalog[:8])
+    saved = str(value or "").strip()
+    return ui.input(
+        label=label,
+        value=saved,
+        placeholder=f"Texto libre. Ejemplos: {sample}",
+    ).classes("w-full")
+
+
+def render_forensic_gemstones_status(case_data: dict) -> None:
+    """Muestra gemas forenses o mensaje vacío (sin tablas a cero)."""
+    if render_detected_gemstones_block(case_data):
+        return
+    forensic = case_data.get("forensic_report") if isinstance(case_data.get("forensic_report"), dict) else {}
+    if forensic:
+        ui.html(
+            "<p class='m-0 text-[11px] text-[#625E57] leading-relaxed'>"
+            "Sin gemas secundarias ni pavé contable en el peritaje forense actual.</p>"
+        )
+
+
 def _format_main_stone_flag(value) -> str:
     if value is True:
         return "True"
@@ -483,23 +506,23 @@ def render_jewelry_cad_laboratory(
     "</span>"
   )
 
-  cad_type = ui.select(
-    _ui_options(JEWELRY_TYPES),
-    value=saved_cad.get("jewelry_type", "Anillo / Sortija"),
-    label="1. Tipología de pieza",
-  ).classes("w-full")
+  cad_type = _hybrid_catalog_input(
+    "1. Tipología de pieza",
+    saved_cad.get("jewelry_type", "Anillo / Sortija"),
+    list(JEWELRY_TYPES),
+  )
 
   with ui.row().classes("w-full grid grid-cols-1 sm:grid-cols-2 gap-3"):
-    cad_shank = ui.select(
-      _ui_options(RING_SHANK_PROFILES),
-      value=saved_cad.get("shank_profile", RING_SHANK_PROFILES[0]),
-      label="2. Estilo de Anillo / Banda",
-    ).classes("w-full")
-    cad_setting = ui.select(
-      _ui_options(SETTING_ARCHITECTURES),
-      value=saved_cad.get("setting_arch", SETTING_ARCHITECTURES[0]),
-      label="3. Tipo de Engaste (ver dibujo III)",
-    ).classes("w-full")
+    cad_shank = _hybrid_catalog_input(
+      "2. Estilo de Anillo / Banda",
+      saved_cad.get("shank_profile", "Tradicional (Aro redondo clásico)"),
+      list(RING_SHANK_PROFILES),
+    )
+    cad_setting = _hybrid_catalog_input(
+      "3. Tipo de Engaste (ver dibujo III)",
+      saved_cad.get("setting_arch", "Canasta (4 o 6 garras con galería abierta)"),
+      list(SETTING_ARCHITECTURES),
+    )
 
   blueprint_slot = ui.column().classes("w-full gap-1")
 
@@ -570,40 +593,55 @@ def render_jewelry_cad_laboratory(
     ).classes("w-full")
 
   ui.html("<span class='micro-coord mt-2'>COTA F // PIEDRAS SECUNDARIAS / HOMBROS / SERIE 2 (EJ. DIAMANTES)</span>")
-  with ui.row().classes("w-full grid grid-cols-3 gap-2"):
-    s_species = ui.select(
-      list(SPECIES_DENSITY_MULTIPLIER.keys()),
-      value=saved_cad.get("side_species", "Diamante"),
-      label="Especie",
-    ).classes("w-full")
-    s_cut = ui.select(
-      _ui_options(GEM_CUT_CATALOG),
-      value=saved_cad.get("side_cut", "Brillante Redondo"),
-      label="Corte / Talla",
-    ).classes("w-full")
-    s_count = ui.number(
-      label="Cantidad real",
-      value=int(saved_cad.get("side_count", 0)),
-      min=0,
-      step=1,
-    ).classes("w-full")
-  with ui.row().classes("w-full grid grid-cols-2 gap-2"):
-    s_l = ui.number(
-      label="Largo / Ø (mm)",
-      value=float(saved_cad.get("side_l_mm", 0.0)),
-      min=0.0,
-      step=0.1,
-    ).classes("w-full")
-    s_w = ui.number(
-      label="Ancho (mm)",
-      value=float(saved_cad.get("side_w_mm", 0.0)),
-      min=0.0,
-      step=0.1,
-    ).classes("w-full")
+  s_count = ui.number(
+    label="Cantidad real (secundarias)",
+    value=int(saved_cad.get("side_count", 0)),
+    min=0,
+    step=1,
+  ).classes("w-full")
+  secondary_empty_note = ui.html(
+    "<p class='micro-coord m-0 text-[#625E57]'>Sin gemas secundarias en montura.</p>"
+  )
+  secondary_fields = ui.column().classes("w-full gap-2")
+  with secondary_fields:
+    with ui.row().classes("w-full grid grid-cols-3 gap-2"):
+      s_species = _hybrid_catalog_input(
+        "Especie",
+        saved_cad.get("side_species", "Diamante"),
+        list(SPECIES_DENSITY_MULTIPLIER.keys()),
+      )
+      s_cut = _hybrid_catalog_input(
+        "Corte / Talla",
+        saved_cad.get("side_cut", "Brillante Redondo"),
+        list(GEM_CUT_CATALOG),
+      )
+    with ui.row().classes("w-full grid grid-cols-2 gap-2"):
+      s_l = ui.number(
+        label="Largo / Ø (mm)",
+        value=float(saved_cad.get("side_l_mm", 0.0)),
+        min=0.0,
+        step=0.1,
+      ).classes("w-full")
+      s_w = ui.number(
+        label="Ancho (mm)",
+        value=float(saved_cad.get("side_w_mm", 0.0)),
+        min=0.0,
+        step=0.1,
+      ).classes("w-full")
 
   carat_preview = ui.label("").classes("micro-coord text-[#141413] mt-1")
 
+  def refresh_secondary_visibility() -> None:
+    empty = int(s_count.value or 0) <= 0
+    if empty:
+      secondary_fields.classes(add="hidden")
+      secondary_empty_note.classes(remove="hidden")
+    else:
+      secondary_fields.classes(remove="hidden")
+      secondary_empty_note.classes(add="hidden")
+
   def refresh_cad_visuals() -> None:
+    refresh_secondary_visibility()
     blueprint_slot.clear()
     total_ring_stones = int(c_count.value or 0) + int(s_count.value or 0)
     with blueprint_slot:
@@ -631,18 +669,26 @@ def render_jewelry_cad_laboratory(
       float(c_w.value or 0),
       float(c_d.value or 0),
     )
-    ct_s = estimate_carats_from_mm(
-      s_species.value,
-      s_cut.value,
-      int(s_count.value or 0),
-      float(s_l.value or 0),
-      float(s_w.value or 0),
-      0.0,
-    )
-    tot = round(ct_c + ct_s, 3)
-    carat_preview.text = (
-      f"QUILATAJE GEOMÉTRICO CALCULADO: SERIE 1 ({ct_c} CT) + SERIE 2 ({ct_s} CT) = TOTAL {tot} CT"
-    )
+    side_n = int(s_count.value or 0)
+    if side_n <= 0:
+      ct_s = 0.0
+      tot = round(ct_c, 3)
+      carat_preview.text = (
+        f"QUILATAJE GEOMÉTRICO: PIEDRA PRINCIPAL ({ct_c} CT). Sin gemas secundarias."
+      )
+    else:
+      ct_s = estimate_carats_from_mm(
+        s_species.value,
+        s_cut.value,
+        side_n,
+        float(s_l.value or 0),
+        float(s_w.value or 0),
+        0.0,
+      )
+      tot = round(ct_c + ct_s, 3)
+      carat_preview.text = (
+        f"QUILATAJE GEOMÉTRICO CALCULADO: SERIE 1 ({ct_c} CT) + SERIE 2 ({ct_s} CT) = TOTAL {tot} CT"
+      )
 
   for ctrl in (
     cad_type,
@@ -661,6 +707,7 @@ def render_jewelry_cad_laboratory(
     s_w,
   ):
     ctrl.on_value_change(lambda _: refresh_cad_visuals())
+  s_count.on_value_change(lambda _: refresh_cad_visuals())
   refresh_cad_visuals()
 
   cad_hyp = ui.select(
@@ -830,9 +877,14 @@ def render_gemology_calculator(
                     ui.select(_ui_options(AUTHORSHIPS), value=gem_state["authorship"], label="Autoría o taller").on_value_change(
                         lambda e: (gem_state.update({"authorship": e.value}), render_controls())
                     ).classes("w-full")
-                    ui.select(_ui_options(SETTINGS), value=gem_state["setting"], label="Engaste").on_value_change(
-                        lambda e: (gem_state.update({"setting": e.value}), render_controls())
-                    ).classes("w-full")
+                    setting_in = _hybrid_catalog_input(
+                        "Engaste",
+                        gem_state.get("setting") or "",
+                        list(SETTINGS),
+                    )
+                    setting_in.on_value_change(
+                        lambda e: (gem_state.update({"setting": e.value or ""}), render_controls())
+                    )
 
                 if gem_state["subject"] in ("Gema", "Gema y perla"):
                     ui.html("<span class='micro-coord mt-2'>PARÁMETROS DE GEMA</span>")

@@ -20,7 +20,9 @@ from agents.forensic_prompts import (
     DOUBLE_BRAIN_DIRECTIVE,
     FORENSIC_JSON_ACTIONABLE_FIELDS,
     FORENSIC_JSON_AUDIT_TRAIL_FIELDS,
+    FORENSIC_CONTINUOUS_LEARNING_DIRECTIVE,
     FORENSIC_JSON_GEMSTONES_FIELDS,
+    FORENSIC_JSON_JEWELRY_DETAILS,
     FORENSIC_JSON_RESOLVED_FIELDS,
     FORENSIC_JSON_SERIAL_FIELDS,
     FORENSIC_STRICT_QUESTIONS_USE_DIRECTIVE,
@@ -405,6 +407,8 @@ class UniversalForensicAgent:
             f"{FORENSIC_JSON_RESOLVED_FIELDS}\n\n"
             f"{FORENSIC_STRICT_QUESTIONS_USE_DIRECTIVE}\n\n"
             f"{FORENSIC_JSON_GEMSTONES_FIELDS}\n\n"
+            f"{FORENSIC_JSON_JEWELRY_DETAILS}\n\n"
+            f"{FORENSIC_CONTINUOUS_LEARNING_DIRECTIVE}\n\n"
             f"{VISUAL_ANCHORING_DIRECTIVE}\n"
             "Usa anomalies_detected y new_protocol_insights solo para hallazgos técnicos; "
             "las peticiones al usuario van en recomendaciones (ActionableRequest), nunca mezclando varias peticiones en un solo user_prompt. "
