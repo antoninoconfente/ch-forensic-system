@@ -85,6 +85,7 @@ class MarketIntelligenceAgent:
         web_market_context: str,
         case_id: str,
         prior_market_report: dict | None = None,
+        expert_resolution_directive: str = "",
     ) -> MarketValuationReport | None:
         query = self._build_rag_query(forensic_report, object_description, context_notes)
         _market_log("[MERCADO] Consultando memoria vectorial de galería (pgvector)…")
@@ -99,7 +100,11 @@ class MarketIntelligenceAgent:
             return self._fallback_report(internal_seed, web_market_context)
 
         self.reset_api_metrics()
+        resolution_header = ""
+        if (expert_resolution_directive or "").strip():
+            resolution_header = f"{expert_resolution_directive.strip()}\n\n"
         system = (
+            f"{resolution_header}"
             "Eres el analista de mercado senior de Curiosities Hunter. Sintetiza valoración estructurada "
             "combinando precedentes internos reales (galería CH) y señales web externas. "
             "Devuelve SOLO JSON válido MarketValuationReport. "
@@ -125,10 +130,13 @@ class MarketIntelligenceAgent:
                 f"- Alto: {prior_market_report.get('estimated_value_high', '—')}\n"
                 f"- Techo adquisición: {prior_market_report.get('recommended_acquisition_ceiling', '—')}\n"
             )
+        notes_for_prompt = context_notes
+        if (expert_resolution_directive or "").strip():
+            notes_for_prompt = f"{expert_resolution_directive.strip()}\n\n{context_notes}"
         prompt = (
             f"Caso activo: {case_id}\n"
             f"Descripción: {object_description}\n"
-            f"Notas: {context_notes}\n\n"
+            f"Notas: {notes_for_prompt}\n\n"
             f"Forense:\n{(forensic_report.model_dump_json() if forensic_report else '{}')}\n\n"
             f"Precedentes internos recuperados (usar solo para razonar; no citar IDs ni similitudes numéricas al usuario):\n"
             f"{json.dumps(precedents_prompt, ensure_ascii=False, indent=2)}\n\n"

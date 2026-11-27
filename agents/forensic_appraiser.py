@@ -103,15 +103,19 @@ class UniversalForensicAgent:
         context_notes: str = "",
         image_paths: list | None = None,
         case_id: str = "DEFAULT",
+        expert_resolution_directive: str = "",
     ) -> ForensicReport | None:
         if not self.client:
             _forensic_log("[FORENSE] Sin cliente Gemini; se omite peritaje estructurado.")
             return None
 
         self.reset_api_metrics()
+        notes = context_notes
+        if (expert_resolution_directive or "").strip():
+            notes = f"{expert_resolution_directive.strip()}\n\n{notes}"
         usable = [p for p in (image_paths or []) if p and os.path.exists(p)]
         _forensic_log("[FORENSE A] Identificando taxonomía disciplinar de la pieza…")
-        taxonomy = self._identify_taxonomy(object_description, context_notes, usable, case_id)
+        taxonomy = self._identify_taxonomy(object_description, notes, usable, case_id)
         if taxonomy is None:
             _forensic_log("[FORENSE A] No se pudo inferir taxonomía; abortando peritaje estructurado.")
             return None
@@ -121,7 +125,7 @@ class UniversalForensicAgent:
             f"[FORENSE A] Taxonomía ({reuse_tag}): {taxonomy.taxonomy_key} "
             f"· familia {taxonomy.parent_domain} · {taxonomy.display_name}"
         )
-        rubric = self._load_or_synthesize_rubric(taxonomy, object_description, context_notes, usable)
+        rubric = self._load_or_synthesize_rubric(taxonomy, object_description, notes, usable)
 
         _forensic_log("[FORENSE B] Peritaje multimodal con protocolo vigente…")
         t0 = time.perf_counter()
@@ -130,10 +134,11 @@ class UniversalForensicAgent:
             taxonomy.display_name,
             taxonomy.category_name,
             object_description,
-            context_notes,
+            notes,
             rubric,
             usable,
             case_id,
+            expert_resolution_directive=expert_resolution_directive,
         )
         _forensic_log(f"[FORENSE B] Peritaje listo ({time.perf_counter() - t0:.1f}s)")
 
@@ -365,6 +370,7 @@ class UniversalForensicAgent:
         rubric: dict,
         image_paths: list,
         case_id: str,
+        expert_resolution_directive: str = "",
     ) -> ForensicReport | None:
         checklist = _merge_unique_strings(
             rubric.get("family_inspection_checklist"),
@@ -379,7 +385,12 @@ class UniversalForensicAgent:
         family_parent = rubric.get("family_parent_domain") or ""
         family_siblings = rubric.get("family_sibling_rubrics") or []
 
+        resolution_header = ""
+        if (expert_resolution_directive or "").strip():
+            resolution_header = f"{expert_resolution_directive.strip()}\n\n"
+
         system = (
+            f"{resolution_header}"
             "Eres perito forense universal CH. Aplica estrictamente el protocolo disciplinar entregado. "
             "No inventes categorías fuera de la taxonomía dada. Devuelve SOLO JSON ForensicReport con todos los campos, "
             "incluyendo dimensions_mm (length, width, height, diameter en mm o null), "

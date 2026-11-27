@@ -18,6 +18,11 @@ from agents.schemas import (
 )
 from utils.audit_trail import propagate_audit_trail_to_root, sync_master_global_audit_trail
 from utils.expedient_workflow import apply_expedient_state_transition
+from utils.expert_evidence import (
+    build_expert_resolution_prompt_block,
+    expert_evidence_image_paths,
+    normalize_expert_evidence,
+)
 from utils.gemini_api import GeminiAPIError, append_api_metrics_lines
 from utils.markdown_format import renumber_markdown_headers
 from utils.user_notify import notify_ai_error
@@ -480,7 +485,20 @@ class ExpertCouncilOrchestrator:
                 "draft_extras": {},
             }
 
+        prior_extras = prior_case_extras or {}
+        expert_entries = normalize_expert_evidence(prior_extras.get("expert_evidence"))
+        expert_directive = build_expert_resolution_prompt_block(expert_entries)
+        if expert_directive:
+            context_notes = f"{expert_directive}\n\n{context_notes}"
+            if supplemental_instructions:
+                supplemental_instructions = f"{expert_directive}\n\n{supplemental_instructions}"
+            else:
+                supplemental_instructions = expert_directive
+
         paths = list(image_paths or [])
+        for extra_path in expert_evidence_image_paths(expert_entries):
+            if extra_path and extra_path not in paths:
+                paths.append(extra_path)
         forensic_report: ForensicReport | None = None
         market_report: MarketValuationReport | None = None
         logistics_report: LogisticsArbitrageReport | None = None
@@ -498,6 +516,7 @@ class ExpertCouncilOrchestrator:
                 context_notes,
                 paths,
                 case_id=case_id,
+                expert_resolution_directive=expert_directive,
             )
         except Exception as exc:
             _record_ai_failure(ai_connection_errors, "Agente forense", exc)
@@ -536,7 +555,6 @@ class ExpertCouncilOrchestrator:
             web_context = "[Búsqueda web omitida por timeout o error de conexión.]"
             successful_queries = []
 
-        prior_extras = prior_case_extras or {}
         try:
             market_model = self.market_agent.analyze(
                 parsed_forensic,
@@ -545,6 +563,7 @@ class ExpertCouncilOrchestrator:
                 web_context,
                 case_id,
                 prior_market_report=prior_extras.get("market_valuation_report"),
+                expert_resolution_directive=expert_directive,
             )
         except Exception as exc:
             _record_ai_failure(ai_connection_errors, "Agente de tasación", exc)
@@ -628,15 +647,21 @@ class ExpertCouncilOrchestrator:
                 "cad_blueprint": _merge_cad_seed(parsed_forensic),
                 "object_description_hint": parsed_forensic.category_name,
                 "successful_queries": successful_queries,
+                "expert_evidence": expert_entries,
             }
+        elif expert_entries:
+            draft_extras = {"expert_evidence": expert_entries}
         if market_dump is not None:
             draft_extras["market_valuation_report"] = market_dump
         if logistics_dump is not None:
             draft_extras["logistics_arbitrage_report"] = logistics_dump
+        if expert_entries:
+            draft_extras["expert_evidence"] = expert_entries
         dossier_seed = {
             "forensic_report": forensic_dump or prior_forensic_report or {},
             "market_valuation_report": market_dump or prior_extras.get("market_valuation_report") or {},
             "logistics_arbitrage_report": logistics_dump or prior_extras.get("logistics_arbitrage_report") or {},
+            "expert_evidence": expert_entries,
         }
         legacy_metrics = agent.drain_api_metrics()
         if legacy_metrics:
@@ -706,6 +731,10 @@ class ExpertCouncilOrchestrator:
         prior_market = metadata.get("market_valuation_report") or {}
         parsed_forensic: ForensicReport | None = None
         forensic_raw = metadata.get("forensic_report") or {}
+        expert_entries = normalize_expert_evidence(metadata.get("expert_evidence"))
+        expert_directive = build_expert_resolution_prompt_block(expert_entries)
+        if expert_directive:
+            context_notes = f"{expert_directive}\n\n{context_notes}"
         ai_connection_errors: list[str] = []
         if isinstance(forensic_raw, dict) and forensic_raw:
             try:
@@ -732,6 +761,7 @@ class ExpertCouncilOrchestrator:
                 web_context,
                 case_id,
                 prior_market_report=prior_market if prior_market else None,
+                expert_resolution_directive=expert_directive,
             )
         except Exception as exc:
             _record_ai_failure(ai_connection_errors, "Agente de tasación", exc)

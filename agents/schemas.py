@@ -1,6 +1,7 @@
 """Contratos estructurados del consejo forense (Pydantic v2)."""
 
 import re
+import time
 import unicodedata
 from typing import Literal, Self
 
@@ -95,6 +96,33 @@ class ResolvedRequest(BaseModel):
     @classmethod
     def strip_resolved(cls, value: str) -> str:
         return str(value or "").strip()
+
+
+class ExpertEvidenceEntry(BaseModel):
+    """Prueba pericial aportada manualmente por el experto humano."""
+
+    model_config = LLM_RESPONSE_CONFIG
+
+    text_note: str = Field(..., min_length=1, description="Conclusión de laboratorio o estado actualizado.")
+    image_path: str | None = Field(
+        default=None,
+        description="Ruta local o URL de la imagen de respaldo (test, pieza limpia).",
+    )
+    timestamp: float = Field(
+        default_factory=time.time,
+        description="Marca temporal del anexo.",
+    )
+
+    @field_validator("text_note", mode="before")
+    @classmethod
+    def strip_note(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("image_path", mode="before")
+    @classmethod
+    def strip_image(cls, value):
+        text = str(value or "").strip()
+        return text or None
 
 
 class ActionableRequest(BaseModel):

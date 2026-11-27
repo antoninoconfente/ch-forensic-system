@@ -168,6 +168,99 @@ def render_logistics_arbitrage_report(report: dict, val_display: str) -> None:
         ui.html(f"<div class='spec-table w-full mt-2'>{body}</div>")
 
 
+def render_expert_evidence_proactive_panel(
+    *,
+    expert_evidence: list,
+    can_submit: bool,
+    on_attach_and_recalculate,
+) -> None:
+    """
+    Bucle Human-in-the-Loop: solo Mesa de Auditoría.
+    on_attach_and_recalculate(text_note: str, uploaded: tuple[str, bytes] | None) -> awaitable/str
+    """
+    ui.html(
+        "<span class='micro-coord mt-4 block'>/// APORTE PERICIAL PROACTIVO</span>"
+    )
+    with ui.card().classes("w-full human-evidence-box p-4 gap-3 border border-[#141413]"):
+        ui.html(
+            "<p class='m-0 text-[13px] text-[#141413] font-medium'>"
+            "Aportar Prueba Pericial / Estado Actualizado</p>"
+        )
+        ui.html(
+            "<p class='m-0 text-[11px] text-[#625E57] leading-relaxed'>"
+            "Registre el resultado de laboratorio (refractómetro, certificado, limpieza) "
+            "y opcionalmente una foto. El sistema forzará un escenario de tasación único y definitivo."
+            "</p>"
+        )
+
+        entries = [
+            e
+            for e in (expert_evidence or [])
+            if isinstance(e, dict) and str(e.get("text_note") or "").strip()
+        ]
+        if entries:
+            ui.html("<span class='micro-coord mt-2'>ANEXOS PREVIOS DEL EXPERTO</span>")
+            with ui.column().classes("w-full gap-1 mt-1"):
+                for idx, entry in enumerate(entries, 1):
+                    note = str(entry.get("text_note") or "").strip()
+                    has_img = bool(str(entry.get("image_path") or "").strip())
+                    suffix = " · con imagen" if has_img else ""
+                    ui.html(
+                        f"<p class='m-0 text-[11px] text-[#625E57]'>"
+                        f"{idx}. {html.escape(note)}{suffix}</p>"
+                    )
+
+        note_area = ui.textarea(
+            label="Conclusión pericial",
+            placeholder="Ej.: Gema confirmada natural con refractómetro (RI 1.762–1.770).",
+        ).props("autogrow").classes("w-full")
+        upload_mem: dict[str, tuple[str, bytes]] = {}
+
+        async def _on_upload(e):
+            fname, fbytes = await _extract_upload_bytes(e)
+            if fbytes:
+                upload_mem["file"] = (fname, fbytes)
+                ui.notify("Foto de prueba asociada al anexo", type="positive")
+
+        ui.upload(
+            label="Foto de respaldo (test / pieza limpia)",
+            auto_upload=True,
+            on_upload=_on_upload,
+        ).props("accept=.jpg,.jpeg,.png,.webp flat").classes("w-full editorial-uploader")
+
+        status = ui.label("").classes("micro-coord text-[#8c6d28] hidden")
+
+        if not can_submit:
+            ui.html(
+                "<p class='micro-coord text-[#625E57] m-0 mt-2'>"
+                "Reservado a analistas y administradores con permiso de archivo.</p>"
+            )
+            return
+
+        async def _submit() -> None:
+            text = (note_area.value or "").strip()
+            if not text:
+                ui.notify("Escriba la conclusión pericial antes de recalcular.", type="warning")
+                return
+            status.text = "⏳ ANEXANDO PRUEBA Y RECALCULANDO EXPEDIENTE…"
+            status.classes(remove="hidden")
+            try:
+                uploaded = upload_mem.get("file")
+                result = on_attach_and_recalculate(text, uploaded)
+                if hasattr(result, "__await__"):
+                    result = await result
+                if str(result or "").startswith("[ERR") or str(result or "").startswith("Error"):
+                    ui.notify(str(result), type="negative")
+                    return
+                note_area.value = ""
+                upload_mem.clear()
+                ui.notify("Prueba anexada y tasación recalculada con escenario confirmado", type="positive")
+            finally:
+                status.classes(add="hidden")
+
+        editorial_button("Anexar Evidencia y Recalcular", on_click=_submit).classes("w-full mt-2")
+
+
 def render_public_ficha_spec_table(rows: list[tuple[str, str]]) -> None:
     """Tabla editorial de ficha técnica (Mesa de Auditoría — bloque público)."""
     visible = [(lbl, val) for lbl, val in rows if spec_value_is_present(val)]

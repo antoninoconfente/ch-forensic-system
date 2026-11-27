@@ -89,6 +89,7 @@ from ui.detail_discipline import (
     mount_admin_xray_dialog,
     xray_audit_visible,
     render_detected_gemstones_block,
+    render_expert_evidence_proactive_panel,
     render_gemology_calculator,
     render_gemology_empty_state,
     render_jewelry_cad_laboratory,
@@ -492,6 +493,7 @@ def _build_autosave_payload(
         or draft_extras.get("master_global_audit_trail")
         or [],
         "global_audit_trail": draft_extras.get("global_audit_trail") or [],
+        "expert_evidence": draft_extras.get("expert_evidence") or [],
     }
     propagate_audit_trail_to_root(payload)
     sync_master_global_audit_trail(payload)
@@ -562,6 +564,7 @@ def _metadata_from_case(case: Case) -> dict:
         "master_global_audit_trail": dossier.get("master_global_audit_trail") or [],
         "global_audit_trail": dossier.get("global_audit_trail") or [],
         "manual_jewelry_mode": dossier.get("manual_jewelry_mode"),
+        "expert_evidence": dossier.get("expert_evidence") or [],
     }
 
 
@@ -611,6 +614,7 @@ def persist_cloud_case(
         "master_global_audit_trail": meta.get("master_global_audit_trail") or [],
         "global_audit_trail": meta.get("global_audit_trail") or [],
         "manual_jewelry_mode": meta.get("manual_jewelry_mode"),
+        "expert_evidence": meta.get("expert_evidence") or [],
     }
     columns = _gemology_columns(gem_block)
     sources = list(image_sources if image_sources is not None else meta.get("evidence_urls") or [])
@@ -745,6 +749,122 @@ def save_cad_blueprint_and_recalculate(case_id: str, case_folder: str, metadata:
     return updated
 
 
+def append_expert_evidence_and_recalculate(
+    case_id: str,
+    metadata: dict,
+    text_note: str,
+    uploaded: tuple[str, bytes] | None = None,
+) -> str:
+    """Anexa prueba pericial manual y relanza el pipeline MoE completo."""
+    from utils.expert_evidence import normalize_expert_evidence
+
+    note = str(text_note or "").strip()
+    if not note:
+        return "[ERR] La conclusión pericial no puede estar vacía."
+
+    stored = dict(get_case_view_model(case_id) or metadata or {})
+    entries = normalize_expert_evidence(stored.get("expert_evidence"))
+    image_path: str | None = None
+    new_locals: list[str] = []
+
+    if uploaded is not None:
+        name, content = uploaded
+        if content:
+            evidence_folder = os.path.join(
+                "data", "temp", "cloud", case_id or "case", "expert_evidence"
+            )
+            os.makedirs(evidence_folder, exist_ok=True)
+            extension = os.path.splitext(name)[1] or ".jpg"
+            destination = os.path.join(
+                evidence_folder,
+                f"expert_{os.urandom(3).hex()}{extension}",
+            )
+            with open(destination, "wb") as handle:
+                handle.write(content)
+            image_path = destination
+            new_locals.append(destination)
+
+    entries.append(
+        {
+            "text_note": note,
+            "image_path": image_path,
+            "timestamp": time.time(),
+        }
+    )
+    stored["expert_evidence"] = entries
+
+    allow_net = case_id not in _DRAFT_CASES
+    images = _analysis_image_paths(case_id, stored.get("evidence_urls") or [], allow_network=allow_net)
+    images.extend(new_locals)
+
+    prompt_ctx = (
+        (stored.get("context_notes") or stored.get("intake_notes") or "")
+        + "\n\n"
+        + JEWELRY_RIGOR_INSTRUCTIONS
+    )
+    prior_forensic = stored.get("forensic_report") or {}
+    investigation = expert_council.run_investigation(
+        stored.get("custom_title") or stored.get("object_description", "Pieza peritada"),
+        prompt_ctx,
+        images,
+        case_id,
+        agent,
+        JEWELRY_RIGOR_INSTRUCTIONS,
+        prior_forensic_report=prior_forensic,
+        prior_case_extras={
+            "market_valuation_report": stored.get("market_valuation_report"),
+            "logistics_arbitrage_report": stored.get("logistics_arbitrage_report"),
+            "expert_evidence": entries,
+            "question_answers": stored.get("question_answers") or {},
+            "resolved_questions": stored.get("resolved_questions") or [],
+            "status": stored.get("status"),
+        },
+    )
+    notify_ai_errors(investigation.get("ai_connection_errors"))
+    updated = investigation.get("dictamen_text") or ""
+    if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
+        return updated
+
+    stored["dictamen_text"] = updated
+    extras = investigation.get("draft_extras") or {}
+    if investigation.get("forensic_report"):
+        stored["forensic_report"] = investigation["forensic_report"]
+    elif extras.get("forensic_report"):
+        stored["forensic_report"] = extras["forensic_report"]
+    if extras.get("market_valuation_report"):
+        stored["market_valuation_report"] = extras["market_valuation_report"]
+    if extras.get("logistics_arbitrage_report"):
+        stored["logistics_arbitrage_report"] = extras["logistics_arbitrage_report"]
+    if extras.get("master_global_audit_trail"):
+        stored["master_global_audit_trail"] = extras["master_global_audit_trail"]
+    if investigation.get("master_global_audit_trail"):
+        stored["master_global_audit_trail"] = investigation["master_global_audit_trail"]
+    if investigation.get("global_audit_trail"):
+        stored["global_audit_trail"] = investigation["global_audit_trail"]
+    stored["expert_evidence"] = entries
+    propagate_audit_trail_to_root(stored)
+    sync_master_global_audit_trail(stored)
+    if extras.get("cad_blueprint"):
+        stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
+    if extras.get("domain_taxonomy"):
+        stored["domain_taxonomy"] = extras["domain_taxonomy"]
+    from utils.expedient_workflow import apply_expedient_state_transition
+
+    stored = apply_expedient_state_transition(stored, updated)
+    if str(extras.get("suggested_status") or investigation.get("suggested_status") or "").lower() == "dictaminado":
+        stored["status"] = "dictaminado"
+    _preserve_draft_status_on_update(stored, case_id)
+    if new_locals:
+        stored.setdefault("evidence_urls", [])
+        for path in new_locals:
+            if path not in stored["evidence_urls"]:
+                stored["evidence_urls"].append(path)
+    if case_id in _DRAFT_CASES:
+        stored["local_image_paths"] = list(images)
+        _DRAFT_CASES[case_id] = stored
+    else:
+        _finalize_cloud_case(case_id, stored, updated, list(stored.get("evidence_urls") or images))
+    return updated
 
 
 def commit_ficha_answers(
@@ -829,6 +949,10 @@ def commit_ficha_answers(
         prior_case_extras={
             "market_valuation_report": stored.get("market_valuation_report"),
             "logistics_arbitrage_report": stored.get("logistics_arbitrage_report"),
+            "expert_evidence": stored.get("expert_evidence") or [],
+            "question_answers": stored.get("question_answers") or {},
+            "resolved_questions": stored.get("resolved_questions") or [],
+            "status": stored.get("status"),
         },
     )
     notify_ai_errors(investigation.get("ai_connection_errors"))
@@ -857,6 +981,8 @@ def commit_ficha_answers(
         stored.setdefault("cad_blueprint", {}).update(extras["cad_blueprint"])
     if extras.get("domain_taxonomy"):
         stored["domain_taxonomy"] = extras["domain_taxonomy"]
+    if extras.get("expert_evidence") is not None:
+        stored["expert_evidence"] = extras.get("expert_evidence") or stored.get("expert_evidence") or []
     from utils.expedient_workflow import apply_expedient_state_transition
 
     stored = apply_expedient_state_transition(stored, updated)
@@ -1801,6 +1927,25 @@ def index_page():
                     ui.html("<span class='micro-coord'>/// FICHA TÉCNICA</span>")
                     render_public_ficha_spec_table(ficha_rows_list)
                     render_physical_metrology_block(discipline_ctx)
+
+                    async def _expert_evidence_recalc(text_note: str, uploaded):
+                        updated = await run.io_bound(
+                            append_expert_evidence_and_recalculate,
+                            case_id,
+                            case_metadata,
+                            text_note,
+                            uploaded,
+                        )
+                        if updated and not str(updated).startswith("[ERR"):
+                            state["last_dictamen"] = updated
+                            refresh_ui()
+                        return updated
+
+                    render_expert_evidence_proactive_panel(
+                        expert_evidence=case_metadata.get("expert_evidence") or [],
+                        can_submit=can_save_expedient(),
+                        on_attach_and_recalculate=_expert_evidence_recalc,
+                    )
 
                     historia_widgets: dict[str, object] = {}
                     historia_files: dict[str, tuple[str, bytes]] = {}

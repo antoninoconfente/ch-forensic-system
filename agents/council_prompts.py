@@ -82,6 +82,7 @@ nunca incluyas llaves { }, arrays JSON, claves técnicas ni bloques de código. 
 
 MARKET_FORENSIC_HYPOTHESIS_ALIGNMENT_DIRECTIVE = """
 ALINEACIÓN FORENSE OBLIGATORIA: Si el forense plantea dudas razonables o múltiples hipótesis sobre un material (ej. Zafiro vs Cuarzo), tus Escenarios de Valoración DEBEN tasar exactamente esas hipótesis. Tienes prohibido inventar escenarios genéricos desconectados del ForensicReport, de detected_gemstones y del global_audit_trail forense.
+Si recibes una DIRECTIVA DE RESOLUCIÓN PERICIAL del experto humano, esa directiva tiene prioridad absoluta: un solo Escenario Pericial Confirmado, sin A/B.
 """
 
 MARKET_QUOTED_GEM_ASSETS_FORMULA_DIRECTIVE = """
