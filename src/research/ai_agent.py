@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from src.research.web_search import WebSearchEngine
+from utils.gemini_api import GeminiAPIError, api_metrics_line_from_response
 from utils.market_search import build_comparable_web_queries, filter_relevant_web_results
 from src.research.visual_search import VisualSearchEngine
 from src.research.punchmarks_db import get_punchmarks_context_for_prompt
@@ -386,6 +387,15 @@ class LocalAIAgent:
         self.library = CastleLibrary()
         self.search_engine = WebSearchEngine()
         self.visual_search_engine = VisualSearchEngine()
+        self._api_metrics_buffer: list[str] = []
+
+    def reset_api_metrics(self) -> None:
+        self._api_metrics_buffer = []
+
+    def drain_api_metrics(self) -> list[str]:
+        lines = list(self._api_metrics_buffer or [])
+        self._api_metrics_buffer = []
+        return lines
 
     def _execute_deep_research(
         self,
@@ -407,7 +417,11 @@ class LocalAIAgent:
         executed_queries: list[str] = []
         for q in queries:
             executed_queries.append(q)
-            res = filter_relevant_web_results(self.search_engine.search_catalog(q, max_results=2))
+            try:
+                res = filter_relevant_web_results(self.search_engine.search_catalog(q, max_results=2))
+            except Exception as exc:
+                print(f"[WEB] Búsqueda omitida ({q}): {exc}", flush=True)
+                res = []
             for item in res:
                 if "cartier.com" not in item.get("href", ""):
                     combined_results.append(item)
@@ -427,13 +441,21 @@ class LocalAIAgent:
         if not self.client:
             return "[ERR_L2_GEMINI_API_KEY_MISSING]: No se ha configurado la clave de API de Gemini Pro."
 
+        self.reset_api_metrics()
         _pipeline_log("[1/4] Preparando imágenes para visión...")
         t_pipeline = time.perf_counter()
         usable_paths = [p for p in (image_paths or []) if p and os.path.exists(p)]
         _pipeline_log(f"[1/4] {len(usable_paths)} archivo(s) local(es) listos ({time.perf_counter() - t_pipeline:.1f}s)")
 
         clean_context = context_notes.replace("FLAQUE", "PLAQUE").replace("ORG", "OR G")
-        web_context, successful_queries = self._execute_deep_research(object_description, clean_context)
+        try:
+            web_context, successful_queries = self._execute_deep_research(
+                object_description, clean_context
+            )
+        except Exception as exc:
+            print(f"[WEB] Deep research falló; se continúa sin contexto web: {exc}", flush=True)
+            web_context = "[Búsqueda web omitida por timeout o error de conexión.]"
+            successful_queries = []
 
         visual_context = ""
         primary_image_path = usable_paths[0] if usable_paths else None
@@ -522,6 +544,9 @@ class LocalAIAgent:
                         temperature=0.1
                     )
                 )
+                metric_line = api_metrics_line_from_response(response)
+                if metric_line:
+                    self._api_metrics_buffer.append(metric_line)
                 dictamen = response.text
                 break
             except Exception as e:
@@ -529,7 +554,7 @@ class LocalAIAgent:
                 if attempt < max_retries - 1:
                     time.sleep(3 * (attempt + 1))
                 else:
-                    return f"[ERR_L3_GEMINI_INFERENCE_FAILED]: {str(e)}"
+                    raise GeminiAPIError(str(e)) from e
 
         _pipeline_log(f"[4/4] Dictamen generado ({time.perf_counter() - t_ia:.1f}s)")
         _pipeline_log(f"Pipeline completo ({time.perf_counter() - t_pipeline:.1f}s total)")
@@ -561,17 +586,21 @@ class LocalAIAgent:
             "actualiza o recalcula el 'MÓDULO DE TASACIÓN, GRAMAJE Y BANDA DE VALORACIÓN DE MERCADO' aplicando los precios de metales en tiempo real y refuerza la 'ESTRATEGIA DE BUYER SEARCH'."
         )
         
+        self.reset_api_metrics()
         try:
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=[prompt, existing_text],
                 config=types.GenerateContentConfig(temperature=0.2)
             )
+            metric_line = api_metrics_line_from_response(response)
+            if metric_line:
+                self._api_metrics_buffer.append(metric_line)
             updated_dictamen = existing_text + "\n\n---\n\n### 🔄 REEVALUACIÓN DINÁMICA DE TASACIÓN Y OJO EXPERTO\n" + response.text
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(updated_dictamen)
             return updated_dictamen
         except Exception as e:
-            return f"Error al actualizar la tasación: {e}"
+            raise GeminiAPIError(str(e)) from e
 
 LocalHermesExplorer = LocalAIAgent

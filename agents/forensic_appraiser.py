@@ -36,6 +36,7 @@ from agents.schemas import (
     infer_parent_domain,
     normalize_snake_key,
 )
+from utils.gemini_api import GeminiAPIError, api_metrics_line_from_response, append_api_metrics_lines
 from database.client import (
     _merge_unique_strings,
     get_domain_rubric,
@@ -86,6 +87,15 @@ class UniversalForensicAgent:
                 self.client = genai.Client()
             except Exception:
                 self.client = None
+        self._api_metrics_buffer: list[str] = []
+
+    def reset_api_metrics(self) -> None:
+        self._api_metrics_buffer = []
+
+    def drain_api_metrics(self) -> list[str]:
+        lines = list(self._api_metrics_buffer or [])
+        self._api_metrics_buffer = []
+        return lines
 
     def appraise(
         self,
@@ -98,6 +108,7 @@ class UniversalForensicAgent:
             _forensic_log("[FORENSE] Sin cliente Gemini; se omite peritaje estructurado.")
             return None
 
+        self.reset_api_metrics()
         usable = [p for p in (image_paths or []) if p and os.path.exists(p)]
         _forensic_log("[FORENSE A] Identificando taxonomía disciplinar de la pieza…")
         taxonomy = self._identify_taxonomy(object_description, context_notes, usable, case_id)
@@ -140,6 +151,10 @@ class UniversalForensicAgent:
                     "cad_measurement_guide": rubric.get("cad_measurement_guide") or "",
                 }
             )
+        if report is not None and self._api_metrics_buffer:
+            trail = append_api_metrics_lines(report.global_audit_trail, list(self._api_metrics_buffer))
+            report = report.model_copy(update={"global_audit_trail": trail})
+            self._api_metrics_buffer = []
         return report
 
     def _load_or_synthesize_rubric(
@@ -450,8 +465,13 @@ class UniversalForensicAgent:
                         response_mime_type="application/json",
                     ),
                 )
+                metric_line = api_metrics_line_from_response(response)
+                if metric_line:
+                    self._api_metrics_buffer.append(metric_line)
                 return (response.text or "").strip()
             except Exception as exc:
                 _forensic_log(f"[FORENSE] Inferencia JSON intento {attempt + 1}: {exc}")
+                if attempt >= 2:
+                    raise GeminiAPIError(str(exc)) from exc
                 time.sleep(2 * (attempt + 1))
         return None

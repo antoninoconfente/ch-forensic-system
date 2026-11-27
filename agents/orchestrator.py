@@ -18,7 +18,9 @@ from agents.schemas import (
 )
 from utils.audit_trail import propagate_audit_trail_to_root, sync_master_global_audit_trail
 from utils.expedient_workflow import apply_expedient_state_transition
+from utils.gemini_api import GeminiAPIError, append_api_metrics_lines
 from utils.markdown_format import renumber_markdown_headers
+from utils.user_notify import notify_ai_error
 from src.research.ai_agent import LocalAIAgent
 
 
@@ -171,6 +173,13 @@ def _forensic_report_dict(report: ForensicReport) -> dict:
 def _council_log(step: str) -> None:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{stamp}] {step}", flush=True)
+
+
+def _record_ai_failure(ai_errors: list[str], phase: str, exc: Exception) -> None:
+    msg = str(exc).strip() or phase
+    ai_errors.append(msg)
+    notify_ai_error(msg)
+    _council_log(f"[MoE] {phase} falló: {exc}")
 
 
 def _forensic_serial_context(report: ForensicReport) -> str:
@@ -480,14 +489,19 @@ class ExpertCouncilOrchestrator:
         forensic_dump = None
         market_dump = None
         logistics_dump = None
+        ai_connection_errors: list[str] = []
 
         _council_log("[CONSEJO 1/3] Agente forense universal · protocolo y peritaje multimodal")
-        forensic_report = self.forensic_agent.appraise(
-            object_description,
-            context_notes,
-            paths,
-            case_id=case_id,
-        )
+        try:
+            forensic_report = self.forensic_agent.appraise(
+                object_description,
+                context_notes,
+                paths,
+                case_id=case_id,
+            )
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Agente forense", exc)
+            forensic_report = None
         if forensic_report is not None:
             from database.client import get_domain_rubric
 
@@ -511,20 +525,30 @@ class ExpertCouncilOrchestrator:
             )
 
         _council_log("[CONSEJO 2/3] Inteligencia de mercado · RAG galería + catálogos web")
-        web_context, successful_queries = agent._execute_deep_research(
-            object_description,
-            enriched_notes,
-            forensic_report=parsed_forensic,
-        )
+        try:
+            web_context, successful_queries = agent._execute_deep_research(
+                object_description,
+                enriched_notes,
+                forensic_report=parsed_forensic,
+            )
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Búsqueda web comparables", exc)
+            web_context = "[Búsqueda web omitida por timeout o error de conexión.]"
+            successful_queries = []
+
         prior_extras = prior_case_extras or {}
-        market_model = self.market_agent.analyze(
-            parsed_forensic,
-            object_description,
-            context_notes,
-            web_context,
-            case_id,
-            prior_market_report=prior_extras.get("market_valuation_report"),
-        )
+        try:
+            market_model = self.market_agent.analyze(
+                parsed_forensic,
+                object_description,
+                context_notes,
+                web_context,
+                case_id,
+                prior_market_report=prior_extras.get("market_valuation_report"),
+            )
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Agente de tasación", exc)
+            market_model = None
         if market_model is not None:
             market_report = market_model
             if prior_extras.get("market_valuation_report"):
@@ -536,13 +560,17 @@ class ExpertCouncilOrchestrator:
                 enriched_notes = f"{enriched_notes}\n\n[CONTEXTO WEB DE MERCADO]\n{web_context}"
 
         _council_log("[CONSEJO 3/3] Logística, aduanas y arbitraje internacional")
-        logistics_model = self.logistics_agent.analyze(
-            parsed_forensic,
-            market_report,
-            object_description,
-            context_notes,
-            case_id,
-        )
+        try:
+            logistics_model = self.logistics_agent.analyze(
+                parsed_forensic,
+                market_report,
+                object_description,
+                context_notes,
+                case_id,
+            )
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Agente logístico", exc)
+            logistics_model = None
         logistics_report = logistics_model
         if prior_extras.get("logistics_arbitrage_report"):
             logistics_report = merge_logistics_audit_trail(
@@ -551,13 +579,24 @@ class ExpertCouncilOrchestrator:
         enriched_notes = f"{enriched_notes}\n\n{_logistics_intelligence_block(logistics_report)}"
 
         _council_log("[MoE] Dictamen integrado · tasación y Buyer Search (agente legado)")
-        dictamen_text = agent.analyze_evidence(
-            object_description=object_description,
-            context_notes=enriched_notes,
-            image_paths=paths,
-            case_id=case_id,
-            persist_case=False,
-        )
+        try:
+            dictamen_text = agent.analyze_evidence(
+                object_description=object_description,
+                context_notes=enriched_notes,
+                image_paths=paths,
+                case_id=case_id,
+                persist_case=False,
+            )
+        except GeminiAPIError as exc:
+            _record_ai_failure(ai_connection_errors, "Dictamen integrado (Gemini)", exc)
+            dictamen_text = f"[ERR_L3_GEMINI_INFERENCE_FAILED]: {exc}"
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Dictamen integrado", exc)
+            dictamen_text = f"[ERR_L3_GEMINI_INFERENCE_FAILED]: {exc}"
+        if str(dictamen_text or "").startswith("[ERR"):
+            notify_ai_error(str(dictamen_text))
+            if str(dictamen_text) not in ai_connection_errors:
+                ai_connection_errors.append(str(dictamen_text))
 
         if parsed_forensic is not None and prior_forensic_report:
             parsed_forensic = merge_forensic_historical_fields(prior_forensic_report, parsed_forensic)
@@ -599,6 +638,12 @@ class ExpertCouncilOrchestrator:
             "market_valuation_report": market_dump or prior_extras.get("market_valuation_report") or {},
             "logistics_arbitrage_report": logistics_dump or prior_extras.get("logistics_arbitrage_report") or {},
         }
+        legacy_metrics = agent.drain_api_metrics()
+        if legacy_metrics:
+            dossier_seed["global_audit_trail"] = append_api_metrics_lines(
+                dossier_seed.get("global_audit_trail"),
+                legacy_metrics,
+            )
         propagate_audit_trail_to_root(dossier_seed)
         sync_master_global_audit_trail(dossier_seed)
         if dossier_seed.get("master_global_audit_trail"):
@@ -636,6 +681,7 @@ class ExpertCouncilOrchestrator:
             "suggested_status": draft_extras.get("suggested_status"),
             "master_global_audit_trail": draft_extras.get("master_global_audit_trail"),
             "global_audit_trail": draft_extras.get("global_audit_trail"),
+            "ai_connection_errors": ai_connection_errors,
         }
 
     def recalculate_market_and_buyers(
@@ -660,26 +706,36 @@ class ExpertCouncilOrchestrator:
         prior_market = metadata.get("market_valuation_report") or {}
         parsed_forensic: ForensicReport | None = None
         forensic_raw = metadata.get("forensic_report") or {}
+        ai_connection_errors: list[str] = []
         if isinstance(forensic_raw, dict) and forensic_raw:
             try:
                 parsed_forensic = ForensicReport.model_validate(forensic_raw)
             except Exception:
                 parsed_forensic = None
 
-        web_context, successful_queries = agent._execute_deep_research(
-            object_description,
-            context_notes,
-            forensic_report=parsed_forensic,
-        )
+        try:
+            web_context, successful_queries = agent._execute_deep_research(
+                object_description,
+                context_notes,
+                forensic_report=parsed_forensic,
+            )
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Búsqueda web comparables", exc)
+            web_context = "[Búsqueda web omitida por timeout o error de conexión.]"
+            successful_queries = []
 
-        market_model = self.market_agent.analyze(
-            parsed_forensic,
-            object_description,
-            context_notes,
-            web_context,
-            case_id,
-            prior_market_report=prior_market if prior_market else None,
-        )
+        try:
+            market_model = self.market_agent.analyze(
+                parsed_forensic,
+                object_description,
+                context_notes,
+                web_context,
+                case_id,
+                prior_market_report=prior_market if prior_market else None,
+            )
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Agente de tasación", exc)
+            market_model = None
         market_report: MarketValuationReport | None = market_model
         if market_report is not None and prior_market:
             market_report = merge_market_audit_trail(prior_market, market_report)
@@ -690,7 +746,11 @@ class ExpertCouncilOrchestrator:
         if web_context:
             notes_for_legacy = f"{notes_for_legacy}\n\n[CONTEXTO WEB DE MERCADO]\n{web_context}"
 
-        updated_dictamen = agent.update_appraisal(case_folder, object_description, notes_for_legacy)
+        try:
+            updated_dictamen = agent.update_appraisal(case_folder, object_description, notes_for_legacy)
+        except Exception as exc:
+            _record_ai_failure(ai_connection_errors, "Recálculo dictamen legacy", exc)
+            updated_dictamen = f"[ERR] {exc}"
         if market_report is not None and updated_dictamen and not str(updated_dictamen).startswith("[ERR"):
             updated_dictamen = _append_market_dictamen(updated_dictamen, market_report)
             updated_dictamen = renumber_markdown_headers(updated_dictamen)
@@ -702,6 +762,12 @@ class ExpertCouncilOrchestrator:
         if successful_queries:
             stored["successful_queries"] = list(
                 dict.fromkeys((metadata.get("successful_queries") or []) + successful_queries)
+            )
+        legacy_metrics = agent.drain_api_metrics()
+        if legacy_metrics:
+            stored["global_audit_trail"] = append_api_metrics_lines(
+                stored.get("global_audit_trail"),
+                legacy_metrics,
             )
         propagate_audit_trail_to_root(stored)
         sync_master_global_audit_trail(stored)
@@ -724,4 +790,5 @@ class ExpertCouncilOrchestrator:
             "global_audit_trail": stored.get("global_audit_trail"),
             "master_global_audit_trail": stored.get("master_global_audit_trail"),
             "successful_queries": stored.get("successful_queries"),
+            "ai_connection_errors": ai_connection_errors,
         }

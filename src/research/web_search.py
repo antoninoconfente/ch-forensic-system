@@ -26,7 +26,8 @@ class WebSearchEngine:
                 if results:
                     break
             except Exception as e:
-                print(f"Intento {attempt+1} fallido en búsqueda web: {e}")
+                print(f"Intento {attempt+1} fallido en búsqueda web: {e}", flush=True)
+                results = []
                 time.sleep(1)
         return results
 

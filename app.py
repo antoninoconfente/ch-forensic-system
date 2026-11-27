@@ -105,6 +105,7 @@ from utils.discipline import (
     spec_value_is_present,
 )
 from utils.audit_trail import propagate_audit_trail_to_root, sync_master_global_audit_trail
+from utils.user_notify import notify_ai_error, notify_ai_errors
 from utils.markdown_format import renumber_markdown_headers
 from utils.parsers import (
     _auto_seed_gemology_from_dictamen,
@@ -830,6 +831,7 @@ def commit_ficha_answers(
             "logistics_arbitrage_report": stored.get("logistics_arbitrage_report"),
         },
     )
+    notify_ai_errors(investigation.get("ai_connection_errors"))
     updated = investigation.get("dictamen_text") or ""
     if str(updated).startswith("[ERR") or str(updated).startswith("Error"):
         return updated
@@ -1296,6 +1298,7 @@ def index_page():
                                 pass
 
                         async def run_investigation():
+                            loading_active = False
                             if source_radio.value == "URL / Google Drive" and not state["uploaded_paths"] and urls_input_ref["widget"]:
                                 raw = urls_input_ref["widget"].value or ""
                                 for u in [x.strip() for x in raw.split("\n") if x.strip()]:
@@ -1310,6 +1313,7 @@ def index_page():
                             ai_loading_dialog.open()
                             status_label.text = "⏳ ANALIZANDO EVIDENCIAS EN SEGUNDO PLANO (SIN DESCONEXIÓN DE SERVIDOR)..."
                             status_label.classes(remove="hidden")
+                            loading_active = True
                             try:
                                 spot_info = market_engine.get_metal_spot_prices()
                                 case_id = f"EXP-CH-{os.urandom(2).hex().upper()}"
@@ -1348,13 +1352,12 @@ def index_page():
                                     JEWELRY_RIGOR_INSTRUCTIONS,
                                 )
                                 investigation = await run.io_bound(council_fn)
+                                notify_ai_errors(investigation.get("ai_connection_errors"))
                                 dictamen_text = renumber_markdown_headers(
                                     investigation.get("dictamen_text", "")
                                 )
                                 if str(dictamen_text).startswith("[ERR"):
-                                    _safe_close_loading_dialog()
-                                    status_label.classes(add="hidden")
-                                    ui.notify(str(dictamen_text), type="negative")
+                                    notify_ai_error(str(dictamen_text))
                                     return
 
                                 autosave_meta = _build_autosave_payload(
@@ -1378,16 +1381,21 @@ def index_page():
                                 state["active_case_id"] = case_id
                                 state["selected_case_id"] = case_id
                                 _safe_close_loading_dialog()
-                                status_label.classes(add="hidden")
+                                loading_active = False
                                 ui.notify(
                                     f"Expediente guardado como «{_default_draft_title()}»",
                                     type="positive",
                                 )
                                 navigate("detail", case_id)
                             except Exception as exc:
-                                _safe_close_loading_dialog()
-                                status_label.classes(add="hidden")
-                                ui.notify(f"Error en la investigación: {exc}", type="negative")
+                                notify_ai_error(str(exc))
+                            finally:
+                                if loading_active:
+                                    _safe_close_loading_dialog()
+                                try:
+                                    status_label.classes(add="hidden")
+                                except Exception:
+                                    pass
     
                         with ui.row().classes("w-full justify-end pt-2"):
                             editorial_button("EJECUTAR INVESTIGACIÓN Y TASACIÓN", on_click=run_investigation)
@@ -2010,6 +2018,7 @@ def index_page():
                             case_folder=scratch,
                             legacy_agent=agent,
                         )
+                        notify_ai_errors(result.get("ai_connection_errors"))
                         updated = result.get("dictamen_text") or ""
                         if updated and not str(updated).startswith("[ERR") and not str(updated).startswith("Error"):
                             stored = dict(get_case_view_model(case_id) or payload)
@@ -2037,7 +2046,7 @@ def index_page():
                             state["last_dictamen"] = updated
                             ui.notify("¡Tasación y estrategia de mercado actualizadas!", type="positive")
                         else:
-                            ui.notify(str(updated or "No se pudo actualizar la tasación."), type="negative")
+                            notify_ai_error(str(updated or "No se pudo actualizar la tasación."))
                         refresh_ui()
 
                     if can_save_expedient():

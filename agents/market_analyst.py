@@ -27,6 +27,7 @@ from agents.council_prompts import (
     WEB_RAG_QUALITY_DIRECTIVE,
 )
 from agents.schemas import ForensicReport, MarketComparable, MarketValuationReport
+from utils.gemini_api import GeminiAPIError, api_metrics_line_from_response, append_api_metrics_lines
 from database.client import search_similar_cases
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -66,6 +67,15 @@ class MarketIntelligenceAgent:
                 self.client = genai.Client()
             except Exception:
                 self.client = None
+        self._api_metrics_buffer: list[str] = []
+
+    def reset_api_metrics(self) -> None:
+        self._api_metrics_buffer = []
+
+    def drain_api_metrics(self) -> list[str]:
+        lines = list(self._api_metrics_buffer or [])
+        self._api_metrics_buffer = []
+        return lines
 
     def analyze(
         self,
@@ -88,6 +98,7 @@ class MarketIntelligenceAgent:
         if self.client is None:
             return self._fallback_report(internal_seed, web_market_context)
 
+        self.reset_api_metrics()
         system = (
             "Eres el analista de mercado senior de Curiosities Hunter. Sintetiza valoración estructurada "
             "combinando precedentes internos reales (galería CH) y señales web externas. "
@@ -134,6 +145,10 @@ class MarketIntelligenceAgent:
             report = MarketValuationReport.model_validate(json.loads(_strip_json_fence(raw)))
             if not report.internal_precedents_used and internal_seed:
                 report = report.model_copy(update={"internal_precedents_used": internal_seed})
+            if self._api_metrics_buffer:
+                trail = append_api_metrics_lines(report.global_audit_trail, list(self._api_metrics_buffer))
+                report = report.model_copy(update={"global_audit_trail": trail})
+                self._api_metrics_buffer = []
             return report
         except (json.JSONDecodeError, ValidationError) as exc:
             _market_log(f"[MERCADO] JSON inválido: {exc}")
@@ -214,8 +229,13 @@ class MarketIntelligenceAgent:
                         response_mime_type="application/json",
                     ),
                 )
+                metric_line = api_metrics_line_from_response(response)
+                if metric_line:
+                    self._api_metrics_buffer.append(metric_line)
                 return (response.text or "").strip()
             except Exception as exc:
                 _market_log(f"[MERCADO] Inferencia intento {attempt + 1}: {exc}")
+                if attempt >= 2:
+                    raise GeminiAPIError(str(exc)) from exc
                 time.sleep(2 * (attempt + 1))
         return None

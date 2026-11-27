@@ -25,6 +25,7 @@ from agents.schemas import (
     MarketRouteOption,
     MarketValuationReport,
 )
+from utils.gemini_api import GeminiAPIError, api_metrics_line_from_response, append_api_metrics_lines
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -87,6 +88,15 @@ class LogisticsArbitrageAgent:
                 self.client = genai.Client()
             except Exception:
                 self.client = None
+        self._api_metrics_buffer: list[str] = []
+
+    def reset_api_metrics(self) -> None:
+        self._api_metrics_buffer = []
+
+    def drain_api_metrics(self) -> list[str]:
+        lines = list(self._api_metrics_buffer or [])
+        self._api_metrics_buffer = []
+        return lines
 
     def analyze(
         self,
@@ -101,6 +111,7 @@ class LogisticsArbitrageAgent:
         if self.client is None:
             return self._fallback_report(forensic_report, market_report)
 
+        self.reset_api_metrics()
         system = (
             "Eres el agente logístico, aduanero y de arbitraje internacional de Curiosities Hunter. "
             "Estima HS Code aplicable, alertas regulatorias, riesgo CITES/patrimonio, costes de transporte "
@@ -130,6 +141,10 @@ class LogisticsArbitrageAgent:
                 report = report.model_copy(
                     update={"route_comparison": self._fallback_routes(market_report)}
                 )
+            if self._api_metrics_buffer:
+                trail = append_api_metrics_lines(report.global_audit_trail, list(self._api_metrics_buffer))
+                report = report.model_copy(update={"global_audit_trail": trail})
+                self._api_metrics_buffer = []
             return report
         except (json.JSONDecodeError, ValidationError) as exc:
             _logistics_log(f"[LOGÍSTICA] JSON inválido: {exc}")
@@ -197,8 +212,13 @@ class LogisticsArbitrageAgent:
                         response_mime_type="application/json",
                     ),
                 )
+                metric_line = api_metrics_line_from_response(response)
+                if metric_line:
+                    self._api_metrics_buffer.append(metric_line)
                 return (response.text or "").strip()
             except Exception as exc:
                 _logistics_log(f"[LOGÍSTICA] Inferencia intento {attempt + 1}: {exc}")
+                if attempt >= 2:
+                    raise GeminiAPIError(str(exc)) from exc
                 time.sleep(2 * (attempt + 1))
         return None
