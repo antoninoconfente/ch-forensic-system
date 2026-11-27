@@ -228,11 +228,162 @@ def _gem_shape_svg(cx: float, cy: float, rx: float, ry: float, cut: str, show_pr
     return "".join(parts)
 
 
-def _setting_macro_svg(setting_arch: str) -> str:
+def _semantic_blob(*parts: str | None) -> str:
+    return " ".join(str(p or "").strip() for p in parts if str(p or "").strip()).lower()
+
+
+def resolve_jewelry_family(jewelry_type: str) -> str:
+    """Familia física para plantillas CAD (fuzzy, sin catálogo cerrado)."""
+    t = _semantic_blob(jewelry_type)
+    if any(w in t for w in ("pulsera", "brazalete", "esclava", "bracelet", "wristband")):
+        return "bracelet"
+    if any(w in t for w in ("collar", "colgante", "gargantilla", "cadena", "necklace", "pendant", "colg")):
+        return "necklace"
+    if any(w in t for w in ("anillo", "sortija", "ring", "alianza", "signet", "sello", "sortijas")):
+        return "ring"
+    if any(w in t for w in ("otro", "objeto", "broche", "pin", "clip")):
+        return "other"
+    if not t:
+        return "ring"
+    return "unknown"
+
+
+def resolve_shank_blueprint_key(shank_profile: str) -> str | None:
+    """Mapea texto libre (ej. «Sello Art Deco») a plantilla base de perfil/planta."""
+    s = _semantic_blob(shank_profile)
+    if not s:
+        return None
+    rules: list[tuple[str, tuple[str, ...]]] = [
+        ("signet", ("sello", "signet", "sinete", "seal ring")),
+        ("solitaire", ("solitario", "solitaire", "piedra única", "piedra unica", "single stone")),
+        (
+            "eternity",
+            ("eternity", "sin fin", "sinfin", "full eternity", "perímetro completo", "perimetro completo"),
+        ),
+        ("half_eternity", ("media alianza", "half eternity", "semi alianza", "half-eternity")),
+        ("alianza", ("alianza", "wedding band", "banda lisa", "band ring", "banda")),
+        ("catedral", ("catedral", "cathedral")),
+        ("europeo", ("europeo", "european", "anti-giro", "anti giro", "base cuadrada")),
+        ("split", ("split", "bifurcad", "banda dividida", "hombros divididos")),
+        ("bypass", ("bypass", "cruzad", "toi et moi", "toi-et-moi")),
+        ("reverse_tapered", ("reverse tapered", "reverse-tapered", "ensanchad", "ensancha hacia")),
+        ("tapered", ("tapered", "afilad", "adelgaz")),
+        (
+            "straight",
+            (
+                "straight",
+                "recta",
+                "tradicional",
+                "redondo clásico",
+                "redondo clasico",
+                "aro clásico",
+                "aro clasico",
+                "clásico",
+            ),
+        ),
+    ]
+    for key, keywords in rules:
+        if any(kw in s for kw in keywords):
+            return key
+    return None
+
+
+def resolve_setting_blueprint_key(setting_arch: str) -> str | None:
+    """Mapea engaste en texto libre a plantilla de zoom (vista III)."""
+    s = _semantic_blob(setting_arch)
+    if not s:
+        return None
+    rules: list[tuple[str, tuple[str, ...]]] = [
+        ("signet_plain", ("sello macizo", "sin engaste", "signet plain", "placa lisa", "macizo")),
+        ("bezel_full", ("biselado completo", "bezel cerrado", "chatón cerrado", "bisel completo", "full bezel")),
+        ("bezel_semi", ("semi-bisel", "semibisel", "bezel abierto", "semi bisel")),
+        ("channel", ("barra", "carril", "canal", "channel")),
+        ("pave", ("pavé", "pave", "micro-pav", "micro pav", "granos")),
+        ("v_prong", ("espiga", "v-prong", "v prong", "garra en v")),
+        ("corona", ("decorativo", "corona", "calad", "voluta")),
+        ("canasta", ("canasta", "garras", "prong", "garra", "4 garras", "6 garras", "gallery")),
+    ]
+    for key, keywords in rules:
+        if any(kw in s for kw in keywords):
+            return key
+    return None
+
+
+def blueprint_organic_title(jewelry_type: str, shank_profile: str, setting_arch: str) -> str:
+    """Etiqueta humana priorizando el estilo libre de la IA / operador."""
+    for candidate in (shank_profile, jewelry_type, setting_arch):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return "Pieza"
+
+
+def _organic_blueprint_header(organic_style: str, setting_arch: str, *, mode: str = "ring") -> str:
+    style_esc = html.escape(str(organic_style or "Pieza").strip())
+    set_esc = html.escape(str(setting_arch or "").strip())
+    mode_label = {
+        "ring": "PLANO TÉCNICO INTERACTIVO",
+        "bracelet": "PLANO REACTIVO CAD // PULSERA & ENGASTE",
+        "necklace": "PLANO REACTIVO CAD // COLLAR, TALLA & ENGASTE",
+        "custom": "PLANO BASE: DISEÑO PERSONALIZADO",
+    }.get(mode, "PLANO TÉCNICO INTERACTIVO")
+    subtitle = f"{style_esc} · {set_esc}" if set_esc else style_esc
+    return f"""
+        <div class="flex justify-between items-center mb-1 border-b border-[#B8B2A4] pb-1">
+            <span class="micro-coord text-[#141413]">{mode_label}: {style_esc.upper()}</span>
+            <span class="micro-coord text-[#8c6d28]">{subtitle}</span>
+        </div>
+    """
+
+
+def _custom_design_blueprint_html(
+    jewelry_type: str,
+    shank_profile: str,
+    setting_arch: str,
+) -> str:
+    """Fallback cuando ninguna palabra clave encaja con nuestras plantillas CAD."""
+    organic = blueprint_organic_title(jewelry_type, shank_profile, setting_arch)
+    header = _organic_blueprint_header(organic, setting_arch, mode="custom")
+    note = html.escape(organic)
+    return f"""
+    <div class="blueprint-box">
+        {header}
+        <svg viewBox="0 0 435 162" class="w-full h-44">
+            <rect x="24" y="28" width="388" height="108" fill="#F3EFE6" stroke="#141413" stroke-width="1.2" stroke-dasharray="6 4"/>
+            <line x1="24" y1="82" x2="412" y2="82" stroke="#B8B2A4" stroke-width="0.8"/>
+            <line x1="218" y1="28" x2="218" y2="136" stroke="#B8B2A4" stroke-width="0.8"/>
+            <polygon points="92,64 128,64 128,100 92,100" fill="none" stroke="#625E57" stroke-width="1.1"/>
+            <polygon points="218,58 258,58 258,98 218,98" fill="none" stroke="#625E57" stroke-width="1.1"/>
+            <polygon points="318,64 354,64 354,100 318,100" fill="none" stroke="#625E57" stroke-width="1.1"/>
+            <text x="218" y="148" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" fill="#625E57">
+                Plantilla neutra · etiqueta conservada: {note}
+            </text>
+        </svg>
+        <p class="micro-coord text-[#625E57] m-0 mt-1 px-1">Sin coincidencia semántica con plantillas base. Use cotas manuales; el estilo «{note}» se conserva en ficha.</p>
+    </div>
+    """
+
+
+def _neutral_setting_macro_svg() -> str:
+    return """
+    <rect x="334" y="64" width="72" height="48" fill="none" stroke="#625E57" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="370" y="92" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" fill="#625E57">ENGASTE</text>
+    <text x="370" y="104" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Sin plantilla</text>
+    """
+
+
+def _setting_macro_svg(setting_arch: str, *, template_key: str | None = None) -> str:
     """Dibuja en la columna derecha del plano (x=315..425) la arquitectura exacta del engaste seleccionado."""
+    key = template_key or resolve_setting_blueprint_key(setting_arch)
     s_low = (setting_arch or "").lower()
-    # Coordenadas base del zoom de engaste: centro x=370, y=92
-    if "biselado completo" in s_low:
+    if key == "signet_plain" or ("sello macizo" in s_low and key is None) or ("sin engaste" in s_low and "signet" in s_low):
+        return """
+        <rect x="338" y="70" width="64" height="42" fill="#EAE4D7" stroke="#141413" stroke-width="1.6"/>
+        <rect x="346" y="78" width="48" height="26" fill="#F3EFE6" stroke="#141413" stroke-width="1.1"/>
+        <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">SELLO / PLACA</text>
+        <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Superficie lisa o cabujón único</text>
+        """
+    if key == "bezel_full" or (key is None and "biselado completo" in s_low):
         return """
         <!-- Engaste Biselado Completo (Bezel cerrado envolvente) -->
         <polygon points="342,68 398,68 388,56 352,56" fill="#EAE4D7" stroke="#141413" stroke-width="1.3"/>
@@ -241,7 +392,7 @@ def _setting_macro_svg(setting_arch: str) -> str:
         <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">BISELADO CERRADO</text>
         <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Metal rodea toda la piedra</text>
         """
-    if "semi-biselado" in s_low:
+    if key == "bezel_semi" or (key is None and "semi-biselado" in s_low):
         return """
         <!-- Engaste Semi-Biselado (Abierto en dos frentes) -->
         <polygon points="344,64 396,64 386,53 354,53" fill="#F3EFE6" stroke="#141413" stroke-width="1.3"/>
@@ -251,7 +402,7 @@ def _setting_macro_svg(setting_arch: str) -> str:
         <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">SEMI-BISELADO</text>
         <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Paredes laterales con centro libre</text>
         """
-    if "barra" in s_low or "carril" in s_low or "canal" in s_low:
+    if key == "channel" or (key is None and ("barra" in s_low or "carril" in s_low or "canal" in s_low)):
         return """
         <!-- Engaste Barra / Canal (Rieles continuos sin garras) -->
         <polygon points="335,68 405,68 400,116 340,116" fill="none" stroke="#141413" stroke-width="1.7"/>
@@ -262,7 +413,7 @@ def _setting_macro_svg(setting_arch: str) -> str:
         <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">BARRA / CANAL</text>
         <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Piedras sujetas entre dos rieles</text>
         """
-    if "pavé" in s_low or "pave" in s_low:
+    if key == "pave" or (key is None and ("pavé" in s_low or "pave" in s_low)):
         return """
         <!-- Engaste Pavé / Micro-pavé -->
         <rect x="334" y="64" width="72" height="48" fill="#EAE4D7" stroke="#141413" stroke-width="1.5"/>
@@ -276,7 +427,7 @@ def _setting_macro_svg(setting_arch: str) -> str:
         <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">PAVÉ / MICRO-PAVÉ</text>
         <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Manto continuo con micro-granos</text>
         """
-    if "espiga" in s_low or "v-prong" in s_low:
+    if key == "v_prong" or (key is None and ("espiga" in s_low or "v-prong" in s_low)):
         return """
         <!-- Engaste en Espiga (Garras en V convergentes) -->
         <polygon points="340,64 400,64 388,52 352,52" fill="#F3EFE6" stroke="#141413" stroke-width="1.3"/>
@@ -287,7 +438,7 @@ def _setting_macro_svg(setting_arch: str) -> str:
         <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">ESPIGA (EN V)</text>
         <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Garras en V desde un vértice</text>
         """
-    if "decorativo" in s_low or "corona" in s_low:
+    if key == "corona" or (key is None and ("decorativo" in s_low or "corona" in s_low)):
         return """
         <!-- Engaste Decorativo / Corona Calada -->
         <polygon points="340,64 400,64 388,52 352,52" fill="#F3EFE6" stroke="#141413" stroke-width="1.3"/>
@@ -297,8 +448,8 @@ def _setting_macro_svg(setting_arch: str) -> str:
         <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">CORONA DECORATIVA</text>
         <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Cesto calado con volutas/arcos</text>
         """
-    # Por defecto: Canasta clásica (4 o 6 garras con galería horizontal)
-    return """
+    if key == "canasta" or (key is None and any(w in s_low for w in ("canasta", "garras", "prong"))):
+        return """
     <!-- Engaste en Canasta (Garras verticales + galería horizontal) -->
     <polygon points="340,64 400,64 388,52 352,52" fill="#F3EFE6" stroke="#141413" stroke-width="1.3"/>
     <polygon points="342,64 398,64 370,104" fill="none" stroke="#141413" stroke-width="0.9" stroke-dasharray="2,2"/>
@@ -311,6 +462,15 @@ def _setting_macro_svg(setting_arch: str) -> str:
     <text x="370" y="135" text-anchor="middle" font-size="8" font-family="Inter, sans-serif" font-weight="600" fill="#141413">CANASTA CLÁSICA</text>
     <text x="370" y="146" text-anchor="middle" font-size="7" font-family="Inter, sans-serif" fill="#625E57">Garras con galería horizontal</text>
     """
+    return _neutral_setting_macro_svg()
+
+
+def _neutral_ring_profile_svg() -> str:
+    return """
+        <circle cx="72" cy="96" r="39" fill="none" stroke="#625E57" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <circle cx="72" cy="96" r="31" fill="none" stroke="#B8B2A4" stroke-width="1"/>
+        <rect x="62" y="42" width="20" height="16" fill="none" stroke="#625E57" stroke-width="1" stroke-dasharray="3 2"/>
+        """
 
 
 def _dynamic_blueprint_svg_html(
@@ -327,14 +487,22 @@ def _dynamic_blueprint_svg_html(
     - Vista II (Centro): Planta Cenital de la banda (Straight, Tapered, Reverse Tapered, Split, Bypass) + Talla real de las piedras
     - Vista III (Derecha): Zoom macro del Engaste seleccionado (Canasta, Espiga, Decorativo, Biselado, Semi-Biselado, Barra/Canal, Pavé)
     """
-    if jewelry_type == "Pulsera / Brazalete":
-        setting_svg = _setting_macro_svg(setting_arch)
+    family = resolve_jewelry_family(jewelry_type)
+    shank_key = resolve_shank_blueprint_key(shank_profile)
+    setting_key = resolve_setting_blueprint_key(setting_arch)
+    organic = blueprint_organic_title(jewelry_type, shank_profile, setting_arch)
+
+    if family in ("unknown", "other") or (
+        family == "ring" and shank_key is None and setting_key is None
+    ):
+        return _custom_design_blueprint_html(jewelry_type, shank_profile, setting_arch)
+
+    if family == "bracelet":
+        setting_svg = _setting_macro_svg(setting_arch, template_key=setting_key)
+        header = _organic_blueprint_header(organic, setting_arch, mode="bracelet")
         return f"""
         <div class="blueprint-box">
-            <div class="flex justify-between items-center mb-1">
-                <span class="micro-coord text-[#141413]">PLANO REACTIVO CAD // PULSERA &amp; ENGASTE</span>
-                <span class="micro-coord">{html.escape(setting_arch.split('(')[0].strip())}</span>
-            </div>
+            {header}
             <svg viewBox="0 0 435 160" class="w-full h-40">
                 <text x="110" y="20" text-anchor="middle" font-size="7.5" font-family="Inter, sans-serif" fill="#625E57">I. PERFIL DE MUÑECA</text>
                 <ellipse cx="110" cy="85" rx="75" ry="46" fill="none" stroke="#141413" stroke-width="1.6"/>
@@ -349,15 +517,13 @@ def _dynamic_blueprint_svg_html(
         </div>
         """
 
-    if jewelry_type == "Collar / Colgante":
-        setting_svg = _setting_macro_svg(setting_arch)
+    if family == "necklace":
+        setting_svg = _setting_macro_svg(setting_arch, template_key=setting_key)
         gem_svg = _gem_shape_svg(135, 102, 18, 22, central_cut, show_prongs=False)
+        header = _organic_blueprint_header(organic, setting_arch, mode="necklace")
         return f"""
         <div class="blueprint-box">
-            <div class="flex justify-between items-center mb-1">
-                <span class="micro-coord text-[#141413]">PLANO REACTIVO CAD // COLLAR, TALLA &amp; ENGASTE</span>
-                <span class="micro-coord">{html.escape(central_cut)}</span>
-            </div>
+            {header}
             <svg viewBox="0 0 435 160" class="w-full h-40">
                 <text x="135" y="18" text-anchor="middle" font-size="7.5" font-family="Inter, sans-serif" fill="#625E57">I. CAÍDA Y MOTIVO CENTRAL</text>
                 <path d="M 55 26 Q 135 95 215 26" fill="none" stroke="#141413" stroke-width="1.4" stroke-dasharray="4,2"/>
@@ -374,9 +540,12 @@ def _dynamic_blueprint_svg_html(
     # =========================================================================
     # PLANO REACTIVO DE ANILLO / SORTIJA (3 VISTAS DINÁMICAS: PERFIL + PLANTA + ENGASTE)
     # =========================================================================
-    s_prof = (shank_profile or "").lower()
-    is_half_eternity = "media alianza" in s_prof
-    is_full_eternity = "eternity" in s_prof or "sin fin" in s_prof
+    is_full_eternity = shank_key == "eternity"
+    is_half_eternity = shank_key == "half_eternity"
+    setting_low = (setting_arch or "").lower()
+    effective_setting_key = setting_key
+    if effective_setting_key is None and shank_key == "signet":
+        effective_setting_key = "signet_plain"
 
     # --- VISTA I: PERFIL DEL ARO (x=15..135, centro cx=72, cy=94) ---
     if is_full_eternity:
@@ -408,14 +577,21 @@ def _dynamic_blueprint_svg_html(
         <rect x="40" y="60" width="9" height="7" transform="rotate(-36 44 63)" fill="#F3EFE6" stroke="#141413" stroke-width="1.2"/>
         <rect x="95" y="60" width="9" height="7" transform="rotate(36 99 63)" fill="#F3EFE6" stroke="#141413" stroke-width="1.2"/>
         """
-    elif "europeo" in s_prof:
+    elif shank_key == "signet":
+        profile_svg = """
+        <!-- Aro Sello / Signet (cabeza plana) -->
+        <circle cx="72" cy="96" r="39" fill="none" stroke="#141413" stroke-width="1.5"/>
+        <circle cx="72" cy="96" r="31" fill="none" stroke="#141413" stroke-width="1"/>
+        <rect x="56" y="38" width="32" height="24" fill="#EAE4D7" stroke="#141413" stroke-width="1.5"/>
+        """
+    elif shank_key == "europeo":
         profile_svg = """
         <!-- Aro Estilo Europeo (Base cuadrada anti-giro) -->
         <path d="M 32,94 A 40,40 0 1,1 112,94 L 106,133 Q 72,138 38,133 Z" fill="none" stroke="#141413" stroke-width="1.6"/>
         <circle cx="72" cy="94" r="31" fill="none" stroke="#141413" stroke-width="1"/>
         <polygon points="58,40 86,40 81,54 63,54" fill="#F3EFE6" stroke="#141413" stroke-width="1.4"/>
         """
-    elif "catedral" in s_prof:
+    elif shank_key == "catedral":
         profile_svg = """
         <!-- Aro Catedral (Hombros arqueados elevados hasta la cabeza) -->
         <circle cx="72" cy="96" r="39" fill="none" stroke="#141413" stroke-width="1.5"/>
@@ -424,13 +600,15 @@ def _dynamic_blueprint_svg_html(
         <path d="M 109,82 Q 100,44 83,46" fill="none" stroke="#141413" stroke-width="1.8"/>
         <polygon points="58,36 86,36 81,56 63,56" fill="#F3EFE6" stroke="#141413" stroke-width="1.5"/>
         """
-    else:
+    elif shank_key in ("solitaire", "straight", "tapered", "reverse_tapered", "split", "bypass", "alianza"):
         profile_svg = """
         <!-- Aro Tradicional Redondo -->
         <circle cx="72" cy="96" r="39" fill="none" stroke="#141413" stroke-width="1.5"/>
         <circle cx="72" cy="96" r="31" fill="none" stroke="#141413" stroke-width="1"/>
         <polygon points="58,40 86,40 81,57 63,57" fill="#F3EFE6" stroke="#141413" stroke-width="1.4"/>
         """
+    else:
+        profile_svg = _neutral_ring_profile_svg()
 
     # --- VISTA II: PLANTA CENITAL DE LA BANDA Y PIEDRAS (x=145..295, centro cx=220, cy=88) ---
     if is_half_eternity or is_full_eternity:
@@ -451,16 +629,16 @@ def _dynamic_blueprint_svg_html(
         <text x="220" y="64" text-anchor="middle" font-size="7.8" font-family="Inter, sans-serif" fill="#141413">F: FILA DE {n_stones} PIEDRAS EN BANDA</text>
         """
     else:
-        if "reverse tapered" in s_prof:
+        if shank_key == "reverse_tapered":
             band_path = "<polygon points='152,82 202,73 202,103 152,94' fill='#EAE4D7' stroke='#141413' stroke-width='1.4'/><polygon points='288,82 238,73 238,103 288,94' fill='#EAE4D7' stroke='#141413' stroke-width='1.4'/>"
-        elif "tapered" in s_prof:
+        elif shank_key == "tapered":
             band_path = "<polygon points='152,74 204,83 204,93 152,102' fill='#EAE4D7' stroke='#141413' stroke-width='1.4'/><polygon points='288,74 236,83 236,93 288,102' fill='#EAE4D7' stroke='#141413' stroke-width='1.4'/>"
-        elif "split" in s_prof:
+        elif shank_key == "split":
             band_path = """
             <path d='M 152,80 L 178,80 L 204,70 L 204,78 L 182,88 L 204,98 L 204,106 L 178,96 L 152,96 Z' fill='#EAE4D7' stroke='#141413' stroke-width='1.3'/>
             <path d='M 288,80 L 262,80 L 236,70 L 236,78 L 258,88 L 236,98 L 236,106 L 262,96 L 288,96 Z' fill='#EAE4D7' stroke='#141413' stroke-width='1.3'/>
             """
-        elif "bypass" in s_prof:
+        elif shank_key == "bypass":
             band_path = """
             <path d='M 152,98 Q 185,98 214,68 L 222,75 Q 190,108 152,108 Z' fill='#EAE4D7' stroke='#141413' stroke-width='1.3'/>
             <path d='M 288,78 Q 255,78 226,108 L 218,101 Q 250,68 288,68 Z' fill='#EAE4D7' stroke='#141413' stroke-width='1.3'/>
@@ -469,7 +647,24 @@ def _dynamic_blueprint_svg_html(
             # Straight / Tradicional / Catedral / Europeo
             band_path = "<rect x='152' y='78' width='136' height='20' fill='#EAE4D7' stroke='#141413' stroke-width='1.4'/>"
 
-        center_gem = _gem_shape_svg(220, 88, 17, 17, central_cut, show_prongs=("bisel" not in setting_arch.lower()))
+        show_center_stone = shank_key not in ("alianza", "signet") or int(side_count or 0) > 0
+        if shank_key == "signet":
+            center_gem = (
+                "<rect x='206' y='76' width='28' height='24' fill='#EAE4D7' stroke='#141413' stroke-width='1.4'/>"
+                if show_center_stone
+                else ""
+            )
+        elif show_center_stone:
+            center_gem = _gem_shape_svg(
+                220,
+                88,
+                17,
+                17,
+                central_cut,
+                show_prongs=("bisel" not in setting_low and effective_setting_key != "bezel_full"),
+            )
+        else:
+            center_gem = ""
         side_gems = ""
         if int(side_count or 0) > 0:
             side_gems = (
@@ -478,21 +673,25 @@ def _dynamic_blueprint_svg_html(
                 + _gem_shape_svg(248, 88, 6.5, 6.5, side_cut, show_prongs=False)
                 + _gem_shape_svg(263, 88, 5.5, 5.5, side_cut, show_prongs=False)
             )
+        center_label = (
+            f"E: CENTRAL ({html.escape(central_cut.split('/')[0].strip().upper())})"
+            if show_center_stone
+            else "B: BANDA (SIN SOLITARIO)"
+        )
         shank_top_svg = f"""
         {band_path}
         {side_gems}
         {center_gem}
-        <text x="220" y="61" text-anchor="middle" font-size="7.8" font-family="Inter, sans-serif" fill="#141413">E: CENTRAL ({html.escape(central_cut.split('/')[0].strip().upper())})</text>
+        <text x="220" y="61" text-anchor="middle" font-size="7.8" font-family="Inter, sans-serif" fill="#141413">{center_label}</text>
         """
 
-    setting_svg = _setting_macro_svg(setting_arch)
+    setting_svg = _setting_macro_svg(setting_arch, template_key=effective_setting_key)
+    header = _organic_blueprint_header(organic, setting_arch, mode="ring")
+    shank_caption = html.escape(str(shank_profile or "").strip().upper())
 
     return f"""
     <div class="blueprint-box">
-        <div class="flex justify-between items-center mb-1 border-b border-[#B8B2A4] pb-1">
-            <span class="micro-coord text-[#141413]">PLANO TÉCNICO INTERACTIVO // CAMBIA SEGÚN ESTILO Y ENGASTE</span>
-            <span class="micro-coord text-[#8c6d28]">{html.escape(shank_profile.split('(')[0].strip())} · {html.escape(setting_arch.split('(')[0].strip())}</span>
-        </div>
+        {header}
         <svg viewBox="0 0 435 162" class="w-full h-44">
             <!-- Encabezados de las 3 vistas -->
             <text x="72" y="16" text-anchor="middle" font-size="7.2" font-family="Inter, sans-serif" font-weight="600" fill="#625E57">I. PERFIL DE ARO</text>
@@ -512,7 +711,7 @@ def _dynamic_blueprint_svg_html(
             <!-- Vista II: Planta Cenital -->
             {shank_top_svg}
             <text x="220" y="125" text-anchor="middle" font-size="7.5" font-family="Inter, sans-serif" fill="#141413">B: ANCHO DE BANDA (MM)</text>
-            <text x="220" y="148" text-anchor="middle" font-size="7.2" font-family="Inter, sans-serif" fill="#625E57">{html.escape(shank_profile.split('(')[0].strip().upper())}</text>
+            <text x="220" y="148" text-anchor="middle" font-size="7.2" font-family="Inter, sans-serif" fill="#625E57">{shank_caption}</text>
 
             <!-- Vista III: Zoom Macro del Engaste -->
             {setting_svg}
@@ -523,27 +722,37 @@ def _dynamic_blueprint_svg_html(
 
 def _plain_language_measurement_guide(shank_profile: str, setting_arch: str) -> str:
     """Devuelve una guía en lenguaje llano para que cualquier usuario no experto sepa qué medir viendo el dibujo."""
+    shank_key = resolve_shank_blueprint_key(shank_profile)
+    setting_key = resolve_setting_blueprint_key(setting_arch)
     s_prof = (shank_profile or "").lower()
     s_set = (setting_arch or "").lower()
 
-    if "media alianza" in s_prof or "eternity" in s_prof:
+    if shank_key in ("half_eternity", "eternity", "alianza") or "media alianza" in s_prof or "eternity" in s_prof:
         ring_tip = (
             "Es un anillo de fila de piedras (sin solitario central aislado). "
             "Cuenta cuántas piedras hay en la fila (ej. 5 esmeraldas y 4 diamantes, o 7 y 5) y anota el ancho de una piedra en mm en el bloque de 'Piedras en Banda / Alianza'."
         )
-    elif "split" in s_prof:
+    elif shank_key == "split" or "split" in s_prof:
         ring_tip = "La banda se divide en dos brazos al llegar a la piedra central. Mide el ancho de la banda abajo (Cota B) y el largo × ancho de la piedra central (Cota E)."
-    elif "catedral" in s_prof:
+    elif shank_key == "catedral" or "catedral" in s_prof:
         ring_tip = "Los hombros suben formando arcos laterales que sostienen la piedra en alto. Mide la altura desde el dedo hasta la cima de la piedra (Cota D)."
+    elif shank_key == "signet" or "sello" in s_prof or "signet" in s_prof:
+        ring_tip = "Sello / signet: mide el ancho y alto de la placa superior (Cota B y D) y el diámetro interior del aro (Cota A)."
+    elif shank_key is None:
+        ring_tip = "Diseño personalizado: anote las cotas A–F a mano según el bloque inferior; el plano es neutro."
     else:
         ring_tip = "Mide con una regla milimetrada el hueco interior del anillo de lado a lado (Cota A: Ø Int) y el grosor de la banda (Cota B)."
 
-    if "barra" in s_set or "canal" in s_set:
+    if setting_key == "channel" or "barra" in s_set or "canal" in s_set:
         set_tip = "Engaste en Canal: las piedras van encajadas dentro de dos rieles continuos de metal, sin patillas individuales."
-    elif "bisel" in s_set:
+    elif setting_key in ("bezel_full", "bezel_semi") or "bisel" in s_set:
         set_tip = "Engaste Biselado: un borde o collarín de metal abraza el contorno de la piedra protegiendo sus bordes."
-    elif "pavé" in s_set:
+    elif setting_key == "pave" or "pavé" in s_set:
         set_tip = "Engaste Pavé: la superficie está tapizada de pequeñas piedras juntas sujetas por diminutos granos de metal."
+    elif setting_key == "signet_plain":
+        set_tip = "Sello macizo: sin garras; mida el área visible de la placa o cabujón."
+    elif setting_key is None:
+        set_tip = "Engaste sin plantilla base: describa en notas cómo sujeta la piedra."
     else:
         set_tip = "Engaste de Garras / Canasta: pequeñas patillas metálicas suben desde la base para abrazar la piedra dejando entrar la luz por debajo."
 

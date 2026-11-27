@@ -36,7 +36,9 @@ from ui.blueprints import (
     SPECIES_DENSITY_MULTIPLIER,
     _dynamic_blueprint_svg_html,
     _plain_language_measurement_guide,
+    blueprint_organic_title,
     estimate_carats_from_mm,
+    resolve_shank_blueprint_key,
 )
 from ui.theme import editorial_button
 from agents.schemas import format_valuation_band
@@ -558,11 +560,7 @@ def render_jewelry_cad_laboratory(
   case_data: dict | None = None,
 ) -> None:
   """Plano técnico interactivo (joyería) — pestaña II."""
-  ui.html(
-    "<span class='micro-coord text-[#141413]'>"
-    "/// PLANO TÉCNICO INTERACTIVO"
-    "</span>"
-  )
+  cad_title_slot = ui.column().classes("w-full gap-0")
 
   ctx = case_data or {}
   forensic = ctx.get("forensic_report") if isinstance(ctx.get("forensic_report"), dict) else {}
@@ -734,8 +732,21 @@ def render_jewelry_cad_laboratory(
 
   def refresh_cad_visuals() -> None:
     refresh_secondary_visibility()
+    cad_title_slot.clear()
     blueprint_slot.clear()
     total_ring_stones = int(c_count.value or 0) + int(s_count.value or 0)
+    shank_key = resolve_shank_blueprint_key(cad_shank.value or "")
+    row_stones = (
+      total_ring_stones
+      if shank_key in ("half_eternity", "eternity", "alianza")
+      else int(s_count.value or 0)
+    )
+    organic = blueprint_organic_title(cad_type.value, cad_shank.value, cad_setting.value)
+    with cad_title_slot:
+      ui.html(
+        f"<span class='micro-coord text-[#141413]'>"
+        f"/// PLANO TÉCNICO INTERACTIVO: {html.escape(organic.upper())}</span>"
+      )
     with blueprint_slot:
       ui.html(
         _dynamic_blueprint_svg_html(
@@ -744,7 +755,7 @@ def render_jewelry_cad_laboratory(
           cad_setting.value,
           c_cut.value,
           s_cut.value,
-          total_ring_stones if "alianza" in (cad_shank.value or "").lower() else int(s_count.value or 0),
+          row_stones,
         )
       )
       guide_txt = _plain_language_measurement_guide(cad_shank.value, cad_setting.value)
