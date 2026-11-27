@@ -39,6 +39,7 @@ from ui.blueprints import (
     estimate_carats_from_mm,
 )
 from ui.theme import editorial_button
+from agents.schemas import format_valuation_band
 from utils.discipline import (
     forensic_dimensions_dict,
     resolve_mass_grams,
@@ -500,10 +501,23 @@ def mount_admin_xray_dialog(
     else:
         trail = list(audit_trail or [])
     entries = normalized_audit_trail_chronological(trail, newest_first=True)
+    market = {}
+    if isinstance(expediente, dict):
+        market = expediente.get("market_valuation_report")
+        if not isinstance(market, dict):
+            market = {}
     with ui.dialog() as dialog, ui.card().classes(
         "bg-grey-9 text-green-400 font-mono w-full max-w-2xl"
     ).style("max-height: 88vh"):
         ui.label("🕵️ MODO AUDITOR: CAJA NEGRA").classes("text-xl font-bold mb-2")
+        if market:
+            cur = str(market.get("currency") or "EUR").strip()
+            band = format_valuation_band(
+                market.get("estimated_value_low") or market.get("valuation_low"),
+                market.get("estimated_value_high") or market.get("valuation_high"),
+                currency=cur,
+            )
+            ui.label(f"Banda MoE (mercado secundario): {band}").classes("text-sm text-green-300 mb-2")
         ui.label("Orden: más reciente arriba").classes("text-caption text-grey-5 mb-4")
         with ui.scroll_area().classes("w-full").style("max-height: 60vh"):
             with ui.column().classes("w-full gap-2 pr-2"):

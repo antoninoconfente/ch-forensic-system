@@ -3,9 +3,79 @@
 import re
 import time
 import unicodedata
-from typing import Literal, Self
+from typing import Literal, Self, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Importes de tasación: el LLM puede devolver 750.0 o "750 €" sin tumbar validación.
+ValuationAmount = Union[float, str]
+
+_VALUATION_NON_AMOUNT = frozenset(
+    {"", "—", "-", "n/a", "na", "pendiente", "sin inferencia", "sin datos"}
+)
+
+
+def coerce_llm_valuation_amount(value: object) -> float | str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, float):
+        return value
+    text = str(value).strip()
+    if not text:
+        return ""
+    if text.casefold() in _VALUATION_NON_AMOUNT:
+        return text
+    if re.search(r"[€$£]|\bEUR\b|\bUSD\b", text, re.I):
+        return text
+    cleaned = re.sub(r"[^\d.,\-+]", "", text.replace("€", ""))
+    if not cleaned or cleaned in {"-", "+"}:
+        return text
+    normalized = cleaned.replace(",", ".")
+    if normalized.count(".") > 1:
+        normalized = normalized.replace(".", "", normalized.count(".") - 1)
+    try:
+        return float(normalized)
+    except ValueError:
+        return text
+
+
+def format_valuation_amount(value: float | str | None, *, currency: str = "EUR") -> str:
+    """Formato moneda para UI y dictamen cuando el campo es numérico nativo."""
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (int, float)):
+        amount = float(value)
+        if abs(amount - round(amount)) < 0.05:
+            number = f"{int(round(amount)):,}".replace(",", ".")
+        else:
+            number = f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        cur = (currency or "EUR").strip()
+        suffix = " €" if cur.upper() == "EUR" else f" {cur}"
+        return f"{number}{suffix}"
+    text = str(value).strip()
+    if text.casefold() in _VALUATION_NON_AMOUNT:
+        return text or "—"
+    coerced = coerce_llm_valuation_amount(text)
+    if isinstance(coerced, float):
+        return format_valuation_amount(coerced, currency=currency)
+    return text
+
+
+def format_valuation_band(
+    low: float | str | None,
+    high: float | str | None,
+    *,
+    currency: str = "EUR",
+) -> str:
+    lo = format_valuation_amount(low, currency=currency)
+    hi = format_valuation_amount(high, currency=currency)
+    if lo == "—" and hi == "—":
+        return "—"
+    return f"{lo} – {hi}"
 
 # Respuestas JSON del LLM: tolerar claves alucinadas sin tumbar el pipeline.
 LLM_RESPONSE_CONFIG = ConfigDict(extra="ignore")
@@ -450,21 +520,21 @@ class MarketComparable(BaseModel):
 class MarketValuationReport(BaseModel):
     model_config = LLM_RESPONSE_CONFIG
 
-    estimated_value_low: str = Field(
+    estimated_value_low: ValuationAmount = Field(
         default="",
         description="Banda baja Mercado Secundario / FMV Escenario A (no liquidación).",
     )
-    estimated_value_high: str = Field(
+    estimated_value_high: ValuationAmount = Field(
         default="",
         description="Banda alta Mercado Secundario / FMV Escenario A (no liquidación).",
     )
-    recommended_acquisition_ceiling: str = ""
+    recommended_acquisition_ceiling: ValuationAmount = ""
     currency: str = "EUR"
     # Alias frecuentes del LLM (también mapeados en model_validator before)
-    valuation_low: str = ""
-    valuation_high: str = ""
+    valuation_low: ValuationAmount = ""
+    valuation_high: ValuationAmount = ""
     valuation_currency: str = ""
-    acquisition_ceiling: str = ""
+    acquisition_ceiling: ValuationAmount = ""
     demand_trend: str = ""
     internal_precedents_used: list[MarketComparable] = Field(default_factory=list)
     external_comparables: list[MarketComparable] = Field(default_factory=list)
@@ -486,11 +556,26 @@ class MarketValuationReport(BaseModel):
             ("acquisition_ceiling", "recommended_acquisition_ceiling"),
         )
         for alias, canonical in pairs:
-            alias_val = str(data.get(alias) or "").strip()
-            canon_val = str(data.get(canonical) or "").strip()
-            if alias_val and not canon_val:
-                data[canonical] = alias_val
+            alias_raw = data.get(alias)
+            canon_raw = data.get(canonical)
+            alias_empty = alias_raw is None or alias_raw == "" or str(alias_raw).strip() == ""
+            canon_empty = canon_raw is None or canon_raw == "" or str(canon_raw).strip() == ""
+            if not alias_empty and canon_empty:
+                data[canonical] = alias_raw
         return data
+
+    @field_validator(
+        "estimated_value_low",
+        "estimated_value_high",
+        "recommended_acquisition_ceiling",
+        "valuation_low",
+        "valuation_high",
+        "acquisition_ceiling",
+        mode="before",
+    )
+    @classmethod
+    def coerce_valuation_fields(cls, value: object) -> float | str:
+        return coerce_llm_valuation_amount(value)
 
     @field_validator("global_audit_trail", mode="before")
     @classmethod

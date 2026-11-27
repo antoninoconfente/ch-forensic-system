@@ -36,7 +36,8 @@ Las hipótesis de material (ej. zafiro vs cuarzo) se documentan en global_audit_
 
 FORENSIC_JSON_JEWELRY_DETAILS = """
 jewelry_details: objeto opcional (joyería) con jewelry_typology, ring_style y setting_type como TEXTO LIBRE:
-  jewelry_typology — Ej.: Anillo, Sortija, Sello / Signet ring, Alianza…
+  ANCLAJE VISUAL ESTRICTO: Antes de definir la tipología o el estilo, observa la anatomía física básica del objeto. Si tiene un aro diseñado para un dedo humano, ES UN ANILLO o SORTIJA. Tienes TERMINANTEMENTE PROHIBIDO clasificarlo como pulsera, brazalete o collar. Usa tu taxonomía abierta (ej. Signet ring, Solitario) EXCLUSIVAMENTE dentro de la categoría física correcta que estés observando.
+  jewelry_typology — Ej.: Anillo, Sortija, Sello / Signet ring, Alianza… (nunca pulsera/collar si la anatomía es anillo)
   ring_style — Ej.: Solitario, Sello / Signet, Halo, Tresillo, Toi et Moi, Art Decó… (término exacto permitido)
   setting_type — Engaste real observado; no fuerces Pavé/Micro pavé si la pieza es sello macizo o cabujón único
 Replica los valores clave también en key_attributes (ring_style, setting_type, tipologia_objeto) para compatibilidad.

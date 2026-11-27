@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pydantic import ValidationError
+
 from agents.forensic_appraiser import UniversalForensicAgent
 from agents.logistics_arbitrage import LogisticsArbitrageAgent
 from agents.market_analyst import MarketIntelligenceAgent
@@ -13,6 +15,7 @@ from agents.schemas import (
     LogisticsArbitrageReport,
     MarketValuationReport,
     ResolvedRequest,
+    format_valuation_amount,
     infer_parent_domain,
     serial_decoding_dict,
 )
@@ -350,10 +353,14 @@ def _market_intelligence_block(report: MarketValuationReport | None) -> str:
         f"  - {item.title}: {item.price_estimate} · {item.notes[:140]}"
         for item in (report.external_comparables or [])
     ) or "  - Sin comparables externos destacados"
+    cur = report.currency or "EUR"
+    low = format_valuation_amount(report.estimated_value_low, currency=cur)
+    high = format_valuation_amount(report.estimated_value_high, currency=cur)
+    ceiling = format_valuation_amount(report.recommended_acquisition_ceiling, currency=cur)
     return (
         "[BLOQUE INTELIGENCIA DE MERCADO — RAG GALERÍA CH]\n"
-        f"Rango estimado: {report.estimated_value_low} — {report.estimated_value_high} {report.currency}\n"
-        f"Techo adquisición recomendado: {report.recommended_acquisition_ceiling}\n"
+        f"Rango estimado: {low} — {high}\n"
+        f"Techo adquisición recomendado: {ceiling}\n"
         f"Tendencia de demanda: {report.demand_trend}\n"
         f"Precedentes internos (pgvector):\n{internals}\n"
         f"Comparables externos:\n{externals}\n"
@@ -364,11 +371,15 @@ def _market_intelligence_block(report: MarketValuationReport | None) -> str:
 def _append_market_dictamen(dictamen_text: str, report: MarketValuationReport | None) -> str:
     if report is None or str(dictamen_text).startswith("[ERR"):
         return dictamen_text
+    cur = report.currency or "EUR"
+    low = format_valuation_amount(report.estimated_value_low, currency=cur)
+    high = format_valuation_amount(report.estimated_value_high, currency=cur)
+    ceiling = format_valuation_amount(report.recommended_acquisition_ceiling, currency=cur)
     block = (
         "\n\n---\n"
         "### 💹 INTELIGENCIA DE MERCADO (RAG + COMPARABLES)\n"
-        f"- **Rango:** {report.estimated_value_low} — {report.estimated_value_high} {report.currency}\n"
-        f"- **Techo adquisición:** {report.recommended_acquisition_ceiling}\n"
+        f"- **Rango:** {low} — {high}\n"
+        f"- **Techo adquisición:** {ceiling}\n"
         f"- **Demanda:** {report.demand_trend}\n\n"
         f"{report.pricing_rationale}\n"
     )
@@ -554,11 +565,15 @@ class ExpertCouncilOrchestrator:
 
         parsed_forensic: ForensicReport | None = None
         if forensic_report is not None:
-            parsed_forensic = (
-                forensic_report
-                if isinstance(forensic_report, ForensicReport)
-                else ForensicReport.model_validate(forensic_report)
-            )
+            try:
+                parsed_forensic = (
+                    forensic_report
+                    if isinstance(forensic_report, ForensicReport)
+                    else ForensicReport.model_validate(forensic_report)
+                )
+            except ValidationError as exc:
+                _record_ai_failure(ai_connection_errors, "Validación forense (Pydantic)", exc)
+                parsed_forensic = None
 
         _council_log("[CONSEJO 2/3] Inteligencia de mercado · RAG galería + catálogos web")
         try:
@@ -582,6 +597,9 @@ class ExpertCouncilOrchestrator:
                 prior_market_report=prior_extras.get("market_valuation_report"),
                 expert_resolution_directive=expert_directive,
             )
+        except ValidationError as exc:
+            _record_ai_failure(ai_connection_errors, "Validación tasación (Pydantic)", exc)
+            market_model = None
         except Exception as exc:
             _record_ai_failure(ai_connection_errors, "Agente de tasación", exc)
             market_model = None
@@ -640,10 +658,14 @@ class ExpertCouncilOrchestrator:
         if parsed_forensic is not None:
             forensic_dump = _forensic_report_dict(parsed_forensic)
         elif forensic_report is not None:
-            if hasattr(forensic_report, "model_dump"):
-                forensic_dump = _forensic_report_dict(ForensicReport.model_validate(forensic_report))
-            else:
-                forensic_dump = dict(forensic_report)
+            try:
+                if hasattr(forensic_report, "model_dump"):
+                    forensic_dump = _forensic_report_dict(ForensicReport.model_validate(forensic_report))
+                else:
+                    forensic_dump = dict(forensic_report)
+            except ValidationError as exc:
+                _record_ai_failure(ai_connection_errors, "Validación forense al serializar (Pydantic)", exc)
+                forensic_dump = dict(forensic_report) if isinstance(forensic_report, dict) else None
 
         if market_report is not None:
             market_dump = market_report.model_dump()
@@ -756,6 +778,9 @@ class ExpertCouncilOrchestrator:
         if isinstance(forensic_raw, dict) and forensic_raw:
             try:
                 parsed_forensic = ForensicReport.model_validate(forensic_raw)
+            except ValidationError as exc:
+                _record_ai_failure(ai_connection_errors, "Validación forense (Pydantic)", exc)
+                parsed_forensic = None
             except Exception:
                 parsed_forensic = None
 
@@ -780,6 +805,9 @@ class ExpertCouncilOrchestrator:
                 prior_market_report=prior_market if prior_market else None,
                 expert_resolution_directive=expert_directive,
             )
+        except ValidationError as exc:
+            _record_ai_failure(ai_connection_errors, "Validación tasación (Pydantic)", exc)
+            market_model = None
         except Exception as exc:
             _record_ai_failure(ai_connection_errors, "Agente de tasación", exc)
             market_model = None

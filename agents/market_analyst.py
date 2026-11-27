@@ -158,7 +158,13 @@ class MarketIntelligenceAgent:
                 report = report.model_copy(update={"global_audit_trail": trail})
                 self._api_metrics_buffer = []
             return report
-        except (json.JSONDecodeError, ValidationError) as exc:
+        except ValidationError as exc:
+            from utils.user_notify import notify_ai_error
+
+            notify_ai_error(f"Validación MarketValuationReport: {exc}")
+            _market_log(f"[MERCADO] Pydantic inválido: {exc}")
+            return self._fallback_report(internal_seed, web_market_context)
+        except json.JSONDecodeError as exc:
             _market_log(f"[MERCADO] JSON inválido: {exc}")
             return self._fallback_report(internal_seed, web_market_context)
 

@@ -12,11 +12,16 @@ WORKFLOW_EN_EVALUACION = "EN_EVALUACION"
 def market_valuation_is_computed(market: dict | None) -> bool:
     if not isinstance(market, dict):
         return False
-    low = str(market.get("estimated_value_low") or "").strip()
-    high = str(market.get("estimated_value_high") or "").strip()
     invalid = frozenset({"", "—", "-", "n/a", "na", "pendiente", "sin inferencia"})
-    low_ok = low.casefold() not in invalid
-    high_ok = high.casefold() not in invalid
+
+    def _ok(raw: object) -> bool:
+        if isinstance(raw, (int, float)):
+            return float(raw) > 0
+        s = str(raw or "").strip()
+        return s.casefold() not in invalid
+
+    low_ok = _ok(market.get("estimated_value_low") or market.get("valuation_low"))
+    high_ok = _ok(market.get("estimated_value_high") or market.get("valuation_high"))
     return low_ok or high_ok
 
 

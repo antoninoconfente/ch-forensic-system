@@ -206,15 +206,23 @@ def _commercial_mid_eur(band: tuple | None) -> float | None:
 
 def _structured_market_commercial_label(market_struct: dict) -> tuple[str | None, float | None]:
     """Banda MoE (estimated_value_* = mercado secundario / Escenario A, no liquidación)."""
-    low = str(market_struct.get("estimated_value_low") or market_struct.get("valuation_low") or "").strip()
-    high = str(market_struct.get("estimated_value_high") or market_struct.get("valuation_high") or "").strip()
+    from agents.schemas import coerce_llm_valuation_amount, format_valuation_band
+
+    low_raw = market_struct.get("estimated_value_low")
+    if low_raw in (None, ""):
+        low_raw = market_struct.get("valuation_low")
+    high_raw = market_struct.get("estimated_value_high")
+    if high_raw in (None, ""):
+        high_raw = market_struct.get("valuation_high")
     cur = str(market_struct.get("currency") or market_struct.get("valuation_currency") or "EUR").strip()
-    if not low and not high:
+    low_c = coerce_llm_valuation_amount(low_raw)
+    high_c = coerce_llm_valuation_amount(high_raw)
+    if (low_c == "" or low_c is None) and (high_c == "" or high_c is None):
         return None, None
-    label = f"{low} – {high} {cur}".strip(" –")
+    label = format_valuation_band(low_c, high_c, currency=cur)
     try:
-        low_n = float(str(low).replace(".", "").replace(",", "."))
-        high_n = float(str(high).replace(".", "").replace(",", "."))
+        low_n = float(low_c) if isinstance(low_c, (int, float)) else float(str(low_c).replace(".", "").replace(",", "."))
+        high_n = float(high_c) if isinstance(high_c, (int, float)) else float(str(high_c).replace(".", "").replace(",", "."))
         mid = round((low_n + high_n) / 2.0, 2)
     except (TypeError, ValueError):
         mid = None
