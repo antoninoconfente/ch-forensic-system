@@ -1651,7 +1651,7 @@ def index_page():
                         ui.html("<span class='micro-coord'>SUBASTA ESPECIALIZADA</span>")
                         ui.html(f"<span class='editorial-serif text-xl'>{html.escape(val_info['auction'])}</span>")
                 with ui.column().classes("items-end gap-0"):
-                    ui.html("<span class='micro-coord'>VALOR MINORISTA ESTIMADO</span>")
+                    ui.html("<span class='micro-coord'>VALOR DE MERCADO SECUNDARIO</span>")
                     ui.html(f"<span class='editorial-serif text-3xl'>{html.escape(price_banner)}</span>")
 
                 async def export_dossier_pdf():

@@ -188,42 +188,44 @@ def _extract_product_identity_from_dictamen(dictamen: str, metadata: dict = None
     return maker_header, product
 
 
+def _commercial_band_label(band: tuple | None) -> str | None:
+    if not band:
+        return None
+    return str(band[2] or "").strip() or None
+
+
+def _commercial_mid_eur(band: tuple | None) -> float | None:
+    if not band:
+        return None
+    try:
+        low, high = float(band[0]), float(band[1])
+        return round((low + high) / 2.0, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _structured_market_commercial_label(market_struct: dict) -> tuple[str | None, float | None]:
+    """Banda MoE (estimated_value_* = mercado secundario / Escenario A, no liquidación)."""
+    low = str(market_struct.get("estimated_value_low") or market_struct.get("valuation_low") or "").strip()
+    high = str(market_struct.get("estimated_value_high") or market_struct.get("valuation_high") or "").strip()
+    cur = str(market_struct.get("currency") or market_struct.get("valuation_currency") or "EUR").strip()
+    if not low and not high:
+        return None, None
+    label = f"{low} – {high} {cur}".strip(" –")
+    try:
+        low_n = float(str(low).replace(".", "").replace(",", "."))
+        high_n = float(str(high).replace(".", "").replace(",", "."))
+        mid = round((low_n + high_n) / 2.0, 2)
+    except (TypeError, ValueError):
+        mid = None
+    return label, mid
+
+
 def _extract_true_market_valuation(dictamen: str, metadata: dict = None) -> dict:
     meta = metadata or {}
     text = dictamen or ""
 
     from utils.expedient_workflow import market_valuation_is_computed
-
-    market_struct = meta.get("market_valuation_report") or {}
-    if market_valuation_is_computed(market_struct):
-        low = str(market_struct.get("estimated_value_low") or "").strip()
-        high = str(market_struct.get("estimated_value_high") or "").strip()
-        cur = str(market_struct.get("currency") or "EUR").strip()
-        label = f"{low} – {high} {cur}".strip(" –")
-        try:
-            low_n = float(str(low).replace(".", "").replace(",", "."))
-            high_n = float(str(high).replace(".", "").replace(",", "."))
-            mid = round((low_n + high_n) / 2.0, 2)
-        except (TypeError, ValueError):
-            mid = None
-        return {
-            "display": label,
-            "mid_eur": mid,
-            "wholesale": "—",
-            "auction": "—",
-            "retail": label,
-        }
-
-    gem_data = meta.get("gemology_data") or {}
-    gem_val = (gem_data.get("valuation") or {}).get("piece_eur")
-    if gem_data.get("_user_saved") and gem_data.get("applies") and gem_val:
-        return {
-            "display": format_gem_eur(gem_val),
-            "mid_eur": float(gem_val),
-            "wholesale": "—",
-            "auction": "—",
-            "retail": format_gem_eur(gem_val),
-        }
 
     def _find_band(keywords: str):
         pat = rf"(?is)(?:{keywords})[^\n\|]*\|?\s*€?\s*(\d{{2,6}}(?:[\.,]\d{{3}})?)\s*€?\s*[-–—a]\s*€?\s*(\d{{2,6}}(?:[\.,]\d{{3}})?)\s*€?"
@@ -236,38 +238,68 @@ def _extract_true_market_valuation(dictamen: str, metadata: dict = None) -> dict
                 return low, high, f"{int(low):,} € – {int(high):,} €".replace(",", ".")
         return None
 
-    retail_band = _find_band(r"Mercado\s+Secundario\s+Minorista|Fair\s+Market\s+Value|Venta\s+Curada\s+Minorista|Boutique\s*/\s*Retail|Hip[oó]tesis\s+A|Escenario\s+A")
-    auction_band = _find_band(r"Subasta\s+Especializada|Banda\s+de\s+Martillo|Auction\s+Estimate|Mercado\s+Secundario\s*/\s*Subasta")
-    wholesale_band = _find_band(r"Liquidaci[oó]n\s+Inmediata|Liquidaci[oó]n\s+R[aá]pida|Wholesale|Comercio\s+Mayorista|Melt\s*/\s*Fundici[oó]n")
+    retail_band = _find_band(
+        r"Mercado\s+Secundario(?:\s+Minorista)?|Valor\s+de\s+Reposici[oó]n|"
+        r"Fair\s+Market\s+Value|Venta\s+Curada\s+Minorista|Boutique\s*/\s*Retail|"
+        r"Valor\s+Comercial|Hip[oó]tesis\s+A|Escenario\s+A"
+    )
+    auction_band = _find_band(
+        r"Subasta\s+Especializada|Banda\s+de\s+Martillo|Auction\s+Estimate|Mercado\s+Secundario\s*/\s*Subasta"
+    )
+    wholesale_band = _find_band(
+        r"Liquidaci[oó]n\s+Inmediata|Liquidaci[oó]n\s+R[aá]pida|Wholesale|Comercio\s+Mayorista|Melt\s*/\s*Fundici[oó]n"
+    )
 
-    chosen = retail_band or auction_band or wholesale_band
-    if chosen:
-        low, high, label = chosen
-        mid = round((low + high) / 2.0, 2)
+    commercial_band = retail_band or auction_band
+    header_label = _commercial_band_label(commercial_band)
+    header_mid = _commercial_mid_eur(commercial_band)
+
+    market_struct = meta.get("market_valuation_report") or {}
+    struct_label, struct_mid = (None, None)
+    if market_valuation_is_computed(market_struct):
+        struct_label, struct_mid = _structured_market_commercial_label(market_struct)
+
+    if not header_label and struct_label:
+        header_label = struct_label
+        header_mid = struct_mid
+
+    gem_data = meta.get("gemology_data") or {}
+    gem_val = (gem_data.get("valuation") or {}).get("piece_eur")
+    if gem_data.get("_user_saved") and gem_data.get("applies") and gem_val:
         return {
-            "display": label,
-            "mid_eur": mid,
-            "wholesale": wholesale_band[2] if wholesale_band else "—",
-            "auction": auction_band[2] if auction_band else "—",
-            "retail": retail_band[2] if retail_band else label,
+            "display": format_gem_eur(gem_val),
+            "mid_eur": float(gem_val),
+            "wholesale": _commercial_band_label(wholesale_band) or "—",
+            "auction": _commercial_band_label(auction_band) or "—",
+            "retail": format_gem_eur(gem_val),
+        }
+
+    if header_label:
+        return {
+            "display": header_label,
+            "mid_eur": header_mid,
+            "wholesale": _commercial_band_label(wholesale_band) or "—",
+            "auction": _commercial_band_label(auction_band) or "—",
+            "retail": _commercial_band_label(retail_band) or header_label,
         }
 
     appr = extract_appraisal(text)
     if appr.get("eur") and appr["eur"] > 35:
+        appr_label = appr.get("range_label") or format_eur(appr["eur"])
         return {
-            "display": appr.get("range_label") or format_eur(appr["eur"]),
+            "display": appr_label,
             "mid_eur": float(appr["eur"]),
-            "wholesale": "—",
-            "auction": "—",
-            "retail": appr.get("range_label") or format_eur(appr["eur"]),
+            "wholesale": _commercial_band_label(wholesale_band) or "—",
+            "auction": _commercial_band_label(auction_band) or "—",
+            "retail": appr_label,
         }
 
     return {
-        "display": "EN EVALUACIÓN",
-        "mid_eur": None,
-        "wholesale": "—",
-        "auction": "—",
-        "retail": "—",
+        "display": header_label or "EN EVALUACIÓN",
+        "mid_eur": header_mid,
+        "wholesale": _commercial_band_label(wholesale_band) or "—",
+        "auction": _commercial_band_label(auction_band) or "—",
+        "retail": _commercial_band_label(retail_band) or "—",
     }
 
 

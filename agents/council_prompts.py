@@ -49,6 +49,7 @@ de remate o cotización explícitos encontrados en external_comparables, precede
 Si los comparables son pobres o nulos, mantén la valoración base sin fluctuaciones artificiales (repite banda previa si se suministra).
 Todo cambio de precio debe justificarse matemáticamente en global_audit_trail (media, min, max, fuente, EUR).
 Nunca dejes estimated_value_low, estimated_value_high ni recommended_acquisition_ceiling en blanco: si no hay remates, conserva la banda previa del expediente o declara una banda conservadora derivada del único dato fiable disponible (con penalización explícita en auditoría).
+Los campos estimated_value_low, estimated_value_high, valuation_low y valuation_high deben reflejar EXCLUSIVAMENTE la banda de Mercado Secundario / Fair Market Value del Escenario A (hipótesis principal). Nunca uses liquidación rápida, desguace ni wholesale en esos campos.
 """
 
 MARKET_CASCADE_STRATEGY_DIRECTIVE = """

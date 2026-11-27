@@ -342,8 +342,14 @@ class MarketComparable(BaseModel):
 class MarketValuationReport(BaseModel):
     model_config = LLM_RESPONSE_CONFIG
 
-    estimated_value_low: str = ""
-    estimated_value_high: str = ""
+    estimated_value_low: str = Field(
+        default="",
+        description="Banda baja Mercado Secundario / FMV Escenario A (no liquidación).",
+    )
+    estimated_value_high: str = Field(
+        default="",
+        description="Banda alta Mercado Secundario / FMV Escenario A (no liquidación).",
+    )
     recommended_acquisition_ceiling: str = ""
     currency: str = "EUR"
     # Alias frecuentes del LLM (también mapeados en model_validator before)
